@@ -47,6 +47,9 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
     parameter_max = config.analysis_config['parameterization'][config.parameterization]['max']
     ndim = len(names)
 
+    # Load prior config if present
+    prior_config = config.analysis_config["parameterization"][config.parameterization].get("prior", None)
+
     # Load emulators
     emulation_config = base.EmulatorOrganizationConfig.from_config_file(
         analysis_name=config.analysis_name,
@@ -73,6 +76,7 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
             parameter_min,
             parameter_max,
             ndim,
+            prior_config,
             closure_index=closure_index,
         )
     elif config.mcmc_package == "pocoMC":
@@ -85,6 +89,7 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
             parameter_min,
             parameter_max,
             ndim,
+            prior_config,
             closure_index=closure_index,
         )
     else:
@@ -153,6 +158,7 @@ def _run_using_emcee(
     parameter_min: npt.NDArray[np.float64],
     parameter_max: npt.NDArray[np.float64],
     parameter_ndim: int,
+    prior_config: dict | None,
     closure_index: int,
 ) -> None:
     """Run emcee-based MCMC.
@@ -189,7 +195,7 @@ def _run_using_emcee(
         processes=n_processes,
         initializer=log_posterior.initialize_pool_variables,
         initargs=[
-            parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained
+            parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained, prior_config
         ]) as pool:
 
         # Construct sampler (we create a dummy daughter class from emcee.EnsembleSampler, to add some logging info)
@@ -293,6 +299,7 @@ def _run_using_pocoMC(
     parameter_min: npt.NDArray[np.float64],
     parameter_max: npt.NDArray[np.float64],
     parameter_ndim: int,
+    prior_config: dict | None,
     closure_index: int,
     n_max_steps: int = -1,
 ) -> None:
@@ -349,7 +356,7 @@ def _run_using_pocoMC(
     with ctx.Pool(
         initializer=log_posterior.initialize_pool_variables,
         initargs=[
-            parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained
+            parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained, prior_config
         ]) as pool:
         logging.info('Starting pocoMC ...')
         sampler = pmc.Sampler(
