@@ -95,6 +95,7 @@ parameters:
   #-------------------------------------------
   # MCMC parameters
   mcmc_parameters: &default_mcmc_parameters
+    compute_evidence: False
     n_walkers: 100
     n_burn_steps: 1000
     n_sampling_steps: 5000
@@ -233,6 +234,8 @@ analyses:
         n_walkers: 20
         n_burn_steps: 100
         n_sampling_steps: 500
+        compute_evidence: True
+        evidence_method: "harmonic_mean"      # or "laplace" or "none"
       closure:
         <<: *default_closure_parameters
     <<: *model_base

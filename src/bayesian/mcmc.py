@@ -235,6 +235,18 @@ def _run_using_emcee(
         except Exception as e:
             output_dict['autocorrelation_time'] = None
             logger.info(f"Could not compute autocorrelation time: {e!s}")
+
+        if config.compute_evidence:
+            import bayesian.evidence as evidence
+            logger.info("Computing Bayesian evidence...")
+            try:
+                logZ, logZ_err = evidence.compute_from_sampler(sampler, sampler_type="emcee", method=config.evidence_method)
+                output_dict['logZ'] = logZ
+                output_dict['logZ_err'] = logZ_err
+                logger.info(f"Computed logZ = {logZ:.4f} ± {logZ_err:.4f}")
+            except Exception as e:
+                logger.warning(f"Could not compute evidence: {e}")
+
         # If closure test, save the design point parameters and experimental pseudodata
         if closure_index >= 0:
             design_point =  data_IO.design_array_from_h5(config.output_dir, filename='observables.h5', validation_set=True)[closure_index]
@@ -360,10 +372,16 @@ def _run_using_pocoMC(
     logging.info('Generate the posterior samples ...')
     samples, weights, logl, logp = sampler.posterior() # Weighted posterior samples
 
-    logging.info('Generate the evidence ...')
-    logz, logz_err = sampler.evidence() # Bayesian model evidence estimate and uncertainty
-    logger.info(f"Log evidence: {logz}")
-    logger.info(f"Log evidence error: {logz_err}")
+    if config.compute_evidence:
+        import bayesian.evidence as evidence
+        logger.info("Computing Bayesian evidence...")
+        try:
+            logZ, logZ_err = evidence.compute_from_sampler(sampler, sampler_type="pocoMC", method=config.evidence_method)
+            output_dict['logZ'] = logZ
+            output_dict['logZ_err'] = logZ_err
+            logger.info(f"Computed logZ = {logZ:.4f} ± {logZ_err:.4f}")
+        except Exception as e:
+            logger.warning(f"Could not compute evidence: {e}")
 
     logging.info('Writing pocoMC chains to file...')
     chain_data = {'chain': samples, 'weights': weights, 'logl': logl,
@@ -467,6 +485,9 @@ class MCMCConfig(common_base.CommonBase):
         self.n_burn_steps = mcmc_configuration['n_burn_steps']
         self.n_sampling_steps = mcmc_configuration['n_sampling_steps']
         self.n_logging_steps = mcmc_configuration['n_logging_steps']
+
+        self.compute_evidence = mcmc_configuration.get("compute_evidence", False)
+        self.evidence_method = mcmc_configuration.get("evidence_method", "harmonic_mean")
 
         self.output_dir = Path(config['output_dir']) / f'{analysis_name}_{parameterization}'
         self.emulation_outputfile = Path(self.output_dir) / 'emulation.pkl'
