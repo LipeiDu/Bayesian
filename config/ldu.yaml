@@ -2,8 +2,13 @@
 #-------------------------------------------
 # General parameters
 
-output_dir: '/rds/project/rds-hCZCEbPdvZ8/output/20230829-QM'
+output_dir: '/rds/project/rds-hCZCEbPdvZ8/output/20230829-QM-test11'
 
+skip_standard_analyses: False
+skip_inference_workflows: False
+
+#-------------------------------------------
+# Control parameters for items under "analyses"
 initialize_observables: True
 preprocess_input_data: True
 fit_emulators: True
@@ -11,12 +16,12 @@ run_mcmc: True
 run_closure_tests: True
 
 plot:
-  input_data: True
-  emulators: True
+  input_data: False
+  emulators: False
   mcmc: True
   qhat: True
   closure_tests: True
-  across_analyses: True
+  across_analyses: False
 
 debug_level: 0
 
@@ -131,7 +136,7 @@ analysis_base: &model_base
       min: [0.1, 1, 0.006737946999085467, 0.006737946999085467, 0, 0.049787068367863944]
       max: [0.5, 10, 10, 10, 1.5, 100]
       prior:
-        type: ["uniform", "uniform", "uniform", "uniform", "uniform", "gaussian"]
+        type: ["uniform", "uniform", "uniform", "uniform", "uniform", "uniform"]
         mean: [null, null, null, null, null, 3.0]  # for gaussian prior
         std:  [null, null, null, null, null, 0.5]  # for gaussian prior
     binomial:
@@ -139,7 +144,7 @@ analysis_base: &model_base
       min: [0.1, 1, 0.006737946999085467, 0.006737946999085467, -10, -10, 0]
       max: [0.5, 10, 10, 10, 100, 100, 1.5]
   alpha: 0.2
-  validation_indices: [200, 201] # For exp parameterization, these are the same for all sqrts (i.e. all points 200-229 inclusive)
+  validation_indices: [189, 190, 191] # For exp parameterization, these are the same for all sqrts (i.e. all points 200-229 inclusive)
   design_points_to_exclude: [
     ###########
     # 1st draft
@@ -217,14 +222,14 @@ analysis_hadron_base: &analysis_hadron
 analyses:
 
   ########################
-  # Main analyses for QM23
+  # Joint calibration and multi-step inference
   ########################
   analysis_jet:
     parameters:
       preprocessing:
         <<: *default_preprocessing_parameters
       emulators:
-        default_group:
+        jet_group:
           <<: *default_emulator_parameters
           emulator_name: sk_learn
           n_pc: 5
@@ -247,6 +252,123 @@ analyses:
       'chjet__pt_star__R0.2': [14, 100]
       'chjet__pt_star__R0.4': [16, 100]
     plot_panel_shapes: [[3,3], [3,3], [3,3]]
+
+  analysis_jet_substructure:
+    parameters:
+      preprocessing:
+        <<: *default_preprocessing_parameters
+      emulators:
+        substructure_groomed_group:
+          <<: *default_emulator_parameters
+          emulator_name: sk_learn
+          n_pc: 11
+          observable_list:
+            - 'chjet__zg_'
+            - 'chjet__tg_'
+      mcmc:
+        <<: *default_mcmc_parameters
+        n_walkers: 20
+        n_burn_steps: 100
+        n_sampling_steps: 500
+      closure:
+        <<: *default_closure_parameters
+    <<: *model_base
+    cuts:
+      'chjet__pt_star__R0.2': [14, 100]
+      'chjet__pt_star__R0.4': [16, 100]
+    plot_panel_shapes: [[3,3], [3,3], [3,3], [3,3], [3,3]]
+
+  analysis_jet_and_jet_substructure:
+    parameters:
+      preprocessing:
+        <<: *default_preprocessing_parameters
+      emulators:
+        jet_group:
+          <<: *default_emulator_parameters
+          emulator_name: sk_learn
+          n_pc: 5
+          observable_list:
+            - 'jet__pt_'
+          observable_exclude_list:
+            - "pt_y_atlas"
+            - "2760__PbPb__inclusive_chjet__pt_alice"
+        substructure_groomed_group:
+          <<: *default_emulator_parameters
+          emulator_name: sk_learn
+          n_pc: 11
+          observable_list:
+            - 'chjet__zg_'
+            - 'chjet__tg_'
+      mcmc:
+        <<: *default_mcmc_parameters
+        n_walkers: 20
+        n_burn_steps: 100
+        n_sampling_steps: 500
+        compute_evidence: True
+        evidence_method: "harmonic_mean"      # or "laplace" or "none"
+      closure:
+        <<: *default_closure_parameters
+    <<: *model_base
+    cuts:
+      'chjet__pt_star__R0.2': [14, 100]
+      'chjet__pt_star__R0.4': [16, 100]
+    plot_panel_shapes: [[3,3], [3,3], [3,3]]
+
+inference_workflows:
+  # make sure they have consistent setup
+  # joint_calibration:
+  #   type: joint
+  #   analyses: ["analysis_jet", "analysis_jet_substructure"]
+
+  two_step_calibration:
+    type: multistep
+    run_mcmc: True
+    run_closure_tests: True
+    verify_prior_vs_posterior: True
+    plot:
+      mcmc: True
+      qhat: True
+      closure_tests: True
+    steps:
+      - analysis_jet
+      - analysis_jet_substructure
+    prior_sources:
+      analysis_jet_substructure:
+        posterior_file: posterior.h5
+        method: kde
+
+  ########################
+  # Main analyses for QM23
+  ########################
+
+  # analysis_jet:
+  #   parameters:
+  #     preprocessing:
+  #       <<: *default_preprocessing_parameters
+  #     emulators:
+  #       default_group:
+  #         <<: *default_emulator_parameters
+  #         emulator_name: sk_learn
+  #         n_pc: 5
+  #         observable_list:
+  #           - 'jet__pt_'
+  #         observable_exclude_list:
+  #           - "pt_y_atlas"
+  #           - "2760__PbPb__inclusive_chjet__pt_alice"
+  #     mcmc:
+  #       <<: *default_mcmc_parameters
+  #       n_walkers: 20
+  #       n_burn_steps: 100
+  #       n_sampling_steps: 500
+  #       compute_evidence: True
+  #       evidence_method: "harmonic_mean"      # or "laplace" or "none"
+  #     closure:
+  #       <<: *default_closure_parameters
+  #   <<: *model_base
+  #   cuts:
+  #     'chjet__pt_star__R0.2': [14, 100]
+  #     'chjet__pt_star__R0.4': [16, 100]
+  #   plot_panel_shapes: [[3,3], [3,3], [3,3]]
 
   # analysis_jet_substructure_n_walkers_100_long_prod:
   #   parameters:
@@ -284,13 +406,6 @@ analyses:
   #     'chjet__pt_star__R0.2': [14, 100]
   #     'chjet__pt_star__R0.4': [16, 100]
   #   plot_panel_shapes: [[3,3], [3,3], [3,3], [3,3], [3,3]]
-
-
-
-
-
-
-
 
   #analysis_hadron10_1000:
   #  <<: *analysis_hadron
