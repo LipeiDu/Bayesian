@@ -16,6 +16,7 @@ from scipy.linalg import lapack
 from scipy.stats import norm
 
 from bayesian.emulation import base
+from bayesian import prior as prior_module
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ g_emulation_results: dict[str, dict[str, npt.NDArray[np.float64]]] = None
 g_experimental_results: dict = None
 g_emulator_cov_unexplained: dict = None
 g_prior_config: dict = None
+g_log_prior_fn = None  # Prior callable loaded at init
 
 def initialize_pool_variables(local_min, local_max, local_emulation_config, local_emulation_results, local_experimental_results, local_emulator_cov_unexplained, local_prior_config) -> None:
     global g_min  # noqa: PLW0603
@@ -36,6 +38,7 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     global g_experimental_results  # noqa: PLW0603
     global g_emulator_cov_unexplained  # noqa: PLW0603
     global g_prior_config
+    global g_log_prior_fn
 
     g_min = local_min
     g_max = local_max
@@ -45,6 +48,20 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     g_emulator_cov_unexplained = local_emulator_cov_unexplained
     g_prior_config = local_prior_config
 
+    # Initialize log prior function
+    if g_prior_config is not None:
+        if "prior_source" in g_prior_config:
+            logger.info("Loading prior from posterior file via KDE or Gaussian...")
+            g_log_prior_fn = prior_module.load_posterior_as_prior(
+                posterior_file=g_prior_config["prior_source"]["posterior_file"],
+                method=g_prior_config["prior_source"].get("method", "kde")
+            )
+        else:
+            # if specified: uniform, gaussian, log, etc.
+            g_log_prior_fn = lambda X: prior_module.log_prior(X, g_prior_config)
+    else:
+        # default: uniform prior
+        g_log_prior_fn = lambda X: np.zeros(X.shape[0])
 
 #---------------------------------------------------------------
 def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDArray[np.float64]:
@@ -108,7 +125,7 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
         log_posterior[inside] += list(map(_loglikelihood, dY, covariance_matrix))
 
         # Add log prior term to support non-uniform priors; LDU Apr 21, 2025
-        log_posterior[inside] += _log_prior(X[inside])
+        log_posterior[inside] += g_log_prior_fn(X[inside])
 
         # NOTE-STAT: We don't support the extra_std term here.
 
@@ -155,28 +172,3 @@ def _loglikelihood(y, cov):
         )
 
     return -.5*np.dot(y, alpha) - np.log(L.diagonal()).sum()
-
-#---------------------------------------------------------------
-def _log_prior(X: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    logp = np.zeros(X.shape[0])
-    prior_type = g_prior_config.get("prior", {}).get("type", ["uniform"] * X.shape[1])
-    prior_mean = g_prior_config.get("prior", {}).get("mean", [None] * X.shape[1])
-    prior_std = g_prior_config.get("prior", {}).get("std", [None] * X.shape[1])
-
-    for i, kind in enumerate(prior_type):
-        xi = X[:, i]
-        if kind == "uniform":
-            # Already accounted via bounds, uniform inside bounds has constant log-prob, can skip
-            continue
-        elif kind == "log":
-            logp += -np.log(xi)
-        elif kind == "gaussian":
-            mu = prior_mean[i]
-            sigma = prior_std[i]
-            if mu is None or sigma is None:
-                raise ValueError(f"Missing mean/std for gaussian prior on parameter {i}")
-            logp += norm(loc=mu, scale=sigma).logpdf(xi)
-        else:
-            raise NotImplementedError(f"Prior type '{kind}' is not implemented")
-
-    return logp

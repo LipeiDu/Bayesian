@@ -208,7 +208,18 @@ def _run_using_emcee(
 
         # Generate random starting positions for each walker
         rng = np.random.default_rng()
-        random_pos = rng.uniform(parameter_min, parameter_max, (config.n_walkers, parameter_ndim))
+        if log_posterior.g_log_prior_fn is not None and hasattr(log_posterior.g_log_prior_fn, "sample"):
+            # Sample starting points for the MCMC walkers from the non-trivial priors
+            # speed up burn-in, make chains more accurate, and avoid "stuck walkers" when using nontrivial priors in multistep inference
+            logger.info('Sampling initial walker positions from prior...')
+            random_pos = log_posterior.g_log_prior_fn.sample(size=config.n_walkers)
+        else:
+            logger.info('Sampling initial walker positions uniformly between bounds...')
+            random_pos = rng.uniform(parameter_min, parameter_max, (config.n_walkers, parameter_ndim))
+
+        random_pos = np.atleast_2d(random_pos)
+        if random_pos.shape != (config.n_walkers, parameter_ndim):
+            raise ValueError(f"Sampled random_pos shape {random_pos.shape} does not match expected ({config.n_walkers}, {parameter_ndim})")
 
         # Run first half of burn-in
         # NOTE-STAT: This code doesn't support not doing burn in
@@ -259,6 +270,15 @@ def _run_using_emcee(
             output_dict['design_point'] = design_point
             output_dict['experimental_pseudodata'] = experimental_results
         data_IO.write_dict_to_h5(output_dict, config.mcmc_output_dir, 'mcmc.h5', verbose=True)
+
+        # Save posterior to posterior.h5
+        posterior_samples = sampler.get_chain(flat=True)
+        posterior_dict = {
+            "posterior_samples": posterior_samples,
+            "log_prob": sampler.get_log_prob(flat=True),
+            "parameter_names": np.array(config.analysis_config['parameterization'][config.parameterization]['names'], dtype='S'),
+        }
+        data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
 
         # Save the sampler to file as well, in case we want to access it later
         #   e.g. sampler.get_chain(discard=n_burn_steps, thin=thin, flat=True)
@@ -379,6 +399,13 @@ def _run_using_pocoMC(
     logging.info('Generate the posterior samples ...')
     samples, weights, logl, logp = sampler.posterior() # Weighted posterior samples
 
+    output_dict = {
+        'chain': samples,
+        'weights': weights,
+        'logl': logl,
+        'logp': logp,
+    }
+
     if config.compute_evidence:
         import bayesian.evidence as evidence
         logger.info("Computing Bayesian evidence...")
@@ -389,6 +416,21 @@ def _run_using_pocoMC(
             logger.info(f"Computed logZ = {logZ:.4f} ± {logZ_err:.4f}")
         except Exception as e:
             logger.warning(f"Could not compute evidence: {e}")
+
+    # Save full MCMC state to mcmc.h5
+    logger.info('Writing pocoMC MCMC state to mcmc.h5...')
+    data_IO.write_dict_to_h5(output_dict, config.mcmc_output_dir, 'mcmc.h5', verbose=True)
+
+    # Save lightweight posterior samples
+    logger.info('Writing posterior samples to posterior.h5...')
+    posterior_dict = {
+        "posterior_samples": samples,
+        "weights": weights,
+        "logl": logl,
+        "logp": logp,
+        "parameter_names": np.array(config.analysis_config['parameterization'][config.parameterization]['names'], dtype='S'),
+    }
+    data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
 
     logging.info('Writing pocoMC chains to file...')
     chain_data = {'chain': samples, 'weights': weights, 'logl': logl,
