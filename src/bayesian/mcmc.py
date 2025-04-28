@@ -64,7 +64,10 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
 
     # Load experimental data into arrays: experimental_results['y'/'y_err'] (n_features,)
     # In the case of a closure test, we use the pseudodata from the validation design point
-    experimental_results = data_IO.data_array_from_h5(config.output_dir, 'observables.h5', pseudodata_index=closure_index, observable_filter=emulation_config.observable_filter)
+    # NOTE (LDU Apr. 2025):
+    # Load observables.h5 from input_analysis_dir instead of output_dir
+    # because input and output directories are separated for inference workflows.
+    experimental_results = data_IO.data_array_from_h5(config.input_analysis_dir, 'observables.h5', pseudodata_index=closure_index, observable_filter=emulation_config.observable_filter)
 
     if config.mcmc_package == "emcee":
         _run_using_emcee(
@@ -266,7 +269,7 @@ def _run_using_emcee(
 
         # If closure test, save the design point parameters and experimental pseudodata
         if closure_index >= 0:
-            design_point =  data_IO.design_array_from_h5(config.output_dir, filename='observables.h5', validation_set=True)[closure_index]
+            design_point =  data_IO.design_array_from_h5(config.input_analysis_dir, filename='observables.h5', validation_set=True)[closure_index]
             output_dict['design_point'] = design_point
             output_dict['experimental_pseudodata'] = experimental_results
         data_IO.write_dict_to_h5(output_dict, config.mcmc_output_dir, 'mcmc.h5', verbose=True)
@@ -512,7 +515,31 @@ class MCMCConfig(common_base.CommonBase):
     # Constructor
     #---------------------------------------------------------------
     def __init__(self, analysis_name='', parameterization='', analysis_config='', config_file='',
-                       closure_index=-1, **kwargs):
+                       closure_index=-1, input_analysis_dir=None, output_dir=None, **kwargs):
+        """
+        MCMCConfig configuration for MCMC sampling.
+
+        ------------------------------------------
+        Separate input and output directories
+        (updated by LDU, Apr. 2025):
+
+        Previously (standard analyses):
+            - All input and output files (emulators, observables, MCMC results) 
+              were saved and loaded from the same folder:
+                Path(config['output_dir']) / f'{analysis_name}_{parameterization}'
+
+        Now (inference workflows, e.g., multistep):
+            - We want to reuse emulators and observables from standard analyses 
+              (read from `input_analysis_dir`),
+            - But save MCMC chains, posteriors, closure test results, and plots 
+              into a separate workflow directory (`output_dir`).
+
+        Therefore, input and output directories are now **separated**.
+        ------------------------------------------
+
+        input_analysis_dir:  Path where emulators, observables, posterior.h5 (prior) are loaded.
+        output_dir:          Path where MCMC outputs (mcmc.h5, posterior.h5, sampler, plots) are saved.
+        """
 
         self.analysis_name = analysis_name
         self.parameterization = parameterization
@@ -538,8 +565,29 @@ class MCMCConfig(common_base.CommonBase):
         self.compute_evidence = mcmc_configuration.get("compute_evidence", False)
         self.evidence_method = mcmc_configuration.get("evidence_method", "harmonic_mean")
 
-        self.output_dir = Path(config['output_dir']) / f'{analysis_name}_{parameterization}'
-        self.emulation_outputfile = Path(self.output_dir) / 'emulation.pkl'
+        # Set input/output paths
+        if output_dir is not None:
+            # For inference workflows
+            self.output_dir = Path(output_dir)
+        elif 'output_dir' in analysis_config:
+            # Possibly reused in workflows
+            self.output_dir = Path(analysis_config['output_dir'])
+        else:
+            # Default for standard analyses
+            self.output_dir = Path(config['output_dir']) / f'{analysis_name}_{parameterization}'
+
+        if input_analysis_dir is not None:
+            # For inference workflows: reuse emulators and observables from a standard analysis
+            self.input_analysis_dir = Path(input_analysis_dir)
+        else:
+            # For standard analyses: input and output folders are the same
+            self.input_analysis_dir = self.output_dir
+
+        # Files that are always read from input_analysis_dir
+        self.emulation_outputfile = self.input_analysis_dir / 'emulation.pkl'
+        self.observables_file = self.input_analysis_dir / 'observables.h5'
+
+        # Output files (written newly for this MCMC run)
         self.mcmc_outputfilename = 'mcmc.h5'
         if closure_index < 0:
             self.mcmc_output_dir = Path(self.output_dir)

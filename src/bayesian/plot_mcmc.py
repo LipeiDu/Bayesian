@@ -64,7 +64,7 @@ def plot(config: mcmc.MCMCConfig):
     _plot_posterior_pairplot(chain, plot_dir, config)
 
     # Posterior vs. Design observables
-    design = data_IO.design_array_from_h5(config.output_dir, filename=config.observables_filename)
+    design = data_IO.design_array_from_h5(config.input_analysis_dir, filename=config.observables_filename)
     _plot_design_pairplot(design, plot_dir, config)
     _plot_design_observables(design, plot_dir, config)
     _plot_posterior_observables(chain, plot_dir, config)
@@ -324,10 +324,10 @@ def _plot_design_observables(design, plot_dir, config):
     '''
 
     # Get observables
-    observables = data_IO.read_dict_from_h5(config.output_dir, config.observables_filename, verbose=False)
+    observables = data_IO.read_dict_from_h5(config.input_analysis_dir, config.observables_filename, verbose=False)
 
     # Get JETSCAPE predictions
-    Y = data_IO.predictions_matrix_from_h5(config.output_dir, filename=config.observables_filename)
+    Y = data_IO.predictions_matrix_from_h5(config.input_analysis_dir, filename=config.observables_filename)
     # Translate matrix of stacked observables to a dict of matrices per observable
     Y_dict = data_IO.observable_dict_from_matrix(Y, observables, config=config)
 
@@ -354,7 +354,7 @@ def _plot_posterior_observables(chain, plot_dir, config, n_samples=200):
     posterior_samples = posterior[idx,:]
 
     # Get emulator predictions at these points
-    observables = data_IO.read_dict_from_h5(config.output_dir, config.observables_filename, verbose=False)
+    observables = data_IO.read_dict_from_h5(config.input_analysis_dir, config.observables_filename, verbose=False)
     # To get the results, we need to setup the emulation config
     emulation_config = base.EmulatorOrganizationConfig.from_config_file(
         analysis_name=config.analysis_name,

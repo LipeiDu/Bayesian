@@ -30,12 +30,17 @@ def plot_observable_panels(plot_list, labels, colors, columns, config, plot_dir,
     if legend_kwargs is None:
         legend_kwargs = {}
     # Loop through observables and plot
+    
+    # Read observables from input directory
+    # In multistep inference: input_analysis_dir points to a previous analysis
+    # In standard analyses: falls back to output_dir
+    input_dir = getattr(config, "input_analysis_dir", config.output_dir)
+    observables = data_IO.read_dict_from_h5(input_dir, 'observables.h5', verbose=False)
     # Get sorted list of observables
-    observables = data_IO.read_dict_from_h5(config.output_dir, 'observables.h5', verbose=False)
     sorted_observable_list = data_IO.sorted_observable_list_from_dict(observables, observable_filter=observable_filter)
 
     # Get data (Note: this is where the bin values are stored)
-    data = data_IO.data_dict_from_h5(config.output_dir, filename='observables.h5')
+    data = data_IO.data_dict_from_h5(input_dir, filename='observables.h5')
 
     # Group observables into subplots, with shapes specified in config
     plot_panel_shapes = config.analysis_config['plot_panel_shapes']

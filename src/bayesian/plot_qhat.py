@@ -235,7 +235,7 @@ def _plot_single_parameter_observable_sensitivity(map_parameters, i_parameter, p
     emulator_predictions_x_prime = base.predict(x_prime, emulation_config, emulation_group_results=emulation_results)
 
     # Convert to dict: emulator_predictions[observable_label]
-    observables = data_IO.read_dict_from_h5(config.output_dir, 'observables.h5', verbose=False)
+    observables = data_IO.read_dict_from_h5(config.input_analysis_dir, 'observables.h5', verbose=False)
     emulator_predictions_x_dict = data_IO.observable_dict_from_matrix(emulator_predictions_x['central_value'],
                                                                       observables, observable_filter=emulation_config.observable_filter)
     emulator_predictions_x_prime_dict = data_IO.observable_dict_from_matrix(emulator_predictions_x_prime['central_value'],
