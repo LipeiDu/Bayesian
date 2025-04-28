@@ -387,6 +387,7 @@ class EmulatorBaseConfig:
             analysis_name=config['analysis_name'],
             parameterization=config['parameterization'],
             config_file=config['config_file'],
+            emulation_group_name=config.get('emulation_group_name', None),
         )
         return c
 
@@ -446,6 +447,7 @@ class EmulatorOrganizationConfig(common_base.CommonBase):
                     parameterization=c.parameterization,
                     config_file=c.config_file,
                     analysis_config=c.analysis_config,
+                    emulation_group_name=k,
                 ),
                 settings = c.analysis_config["parameters"]["emulators"][k]
             )
