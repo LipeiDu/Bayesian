@@ -101,7 +101,6 @@ def plot(config):
 
         # Compute the credible interval for the design parameter, and check whether target is within it
         for i,parameter in enumerate(parameter_names):
-            results = data_IO.read_dict_from_h5(config.output_dir, config.mcmc_outputfilename, verbose=True)
             chain = results['chain']
             posterior = chain.reshape((chain.shape[0]*chain.shape[1], chain.shape[2]))
             idx = np.random.choice(posterior.shape[0], size=n_theta_samples, replace=False)
