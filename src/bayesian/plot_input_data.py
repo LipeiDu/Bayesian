@@ -416,11 +416,12 @@ def _plot_pairplot_correlations(
                         # NOTE: The slope_key is the apparently taken from one of the columns of the df.
                         #       It's easier to just search for the right one here.
                         slope_key = [key for key in fit_result.params.keys() if key != "const"][0]
+                        intercept = fit_result.params["const"] if "const" in fit_result.params else 0.0
                         distances = _distance_from_line(
                             x=current_df[x_column],
                             y=current_df[y_column],
                             m=fit_result.params[slope_key],
-                            b=fit_result.params["const"],
+                            b=intercept,
                         )
                         rms = np.sqrt(np.mean(distances**2))
                         logger.debug(f"RMS distance: {rms:.2f}")
@@ -434,7 +435,7 @@ def _plot_pairplot_correlations(
                         _x = np.linspace(np.min(current_df[x_column]), np.max(current_df[x_column]), 100)
                         # I'm sure that there's a way to do this directly from statsmodels, but I find their docs to be difficult to read.
                         # Since this is a simple case, we'll just do it by hand
-                        linear_fit = fit_result.params[slope_key] * _x + fit_result.params["const"]
+                        linear_fit = fit_result.params[slope_key] * _x + intercept
                         current_ax.plot(_x, linear_fit + outliers_config.n_RMS * rms, color='red', linestyle="dashed", linewidth=1.5)
                         current_ax.plot(_x, linear_fit - outliers_config.n_RMS * rms, color='red', linestyle="dashed", linewidth=1.5)
 
@@ -712,17 +713,23 @@ def simple_regplot(
     eval_x = sm.add_constant(np.linspace(np.min(x), np.max(x), n_pts))
     pred = fit_results.get_prediction(eval_x)
 
+    # Use the correct column
+    if eval_x.shape[1] == 2:
+        x_plot = eval_x[:, 1]
+    else:
+        x_plot = eval_x[:, 0]
+
     # draw the fit line and error interval
     ci_kws = {} if ci_kws is None else ci_kws
     ax.fill_between(
-        eval_x[:, 1],
+        x_plot,
         pred.predicted_mean - n_std * pred.se_mean,
         pred.predicted_mean + n_std * pred.se_mean,
         alpha=0.5,
         **ci_kws,
     )
     line_kws = {} if line_kws is None else line_kws
-    h = ax.plot(eval_x[:, 1], pred.predicted_mean, **line_kws)
+    h = ax.plot(x_plot, pred.predicted_mean, **line_kws)
 
     # draw the scatterplot
     scatter_kws = {} if scatter_kws is None else scatter_kws
