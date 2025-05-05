@@ -165,6 +165,51 @@ def predict_emulation_group(parameters, results, emulation_group_config, emulato
     # Note: we just get the std rather than cov, since we are interested in the predictive uncertainty
     #       of a given point, not the correlation between different sample points.
     n_samples = parameters.shape[0]
+
+    # Case 1: PCA is OFF (n_pc is None)
+    # When PCA is disabled, we emulate each observable slice directly in observable space.
+    if emulation_group_config.n_pc is None:
+        observable_slices = emulation_group_config.observable_slices
+
+        if observable_slices is None:
+            raise RuntimeError(f"[predict_emulation_group] observable_slices is not set for group '{emulation_group_config.base_config.emulation_group_name}'")
+
+        # When PCA is off, the number of emulators should match the number of observable_slices (actual observables)
+        if len(emulators) != len(observable_slices):
+            raise ValueError(
+                f"Mismatch between number of emulators ({len(emulators)}) and observable slices ({len(observable_slices)}) "
+                f"in group '{emulation_group_config.base_config.emulation_group_name}'"
+            )
+
+        n_features = sum(s.stop - s.start for s in observable_slices)
+        emulator_central_value = np.zeros((n_samples, n_features))
+        emulator_cov = np.zeros((n_samples, n_features, n_features))
+
+        for i, emulator in enumerate(emulators):
+            y_mean, y_std = emulator.predict(parameters, return_std=True)
+
+            if y_mean.ndim == 1:
+                y_mean = y_mean[:, np.newaxis]
+                y_std = y_std[:, np.newaxis]
+
+            start = observable_slices[i].start
+            stop = observable_slices[i].stop
+            width = stop - start
+
+            if y_mean.shape != (n_samples, width):
+                raise ValueError(
+                    f"Emulator output shape mismatch in group '{emulation_group_config.base_config.emulation_group_name}':\n"
+                    f"Expected shape: ({n_samples}, {width}) from slice {start}:{stop}, but got {y_mean.shape}"
+                )
+
+            emulator_central_value[:, start:stop] = y_mean
+
+            for j in range(n_samples):
+                emulator_cov[j, start:stop, start:stop] = np.diag(y_std[j] ** 2)
+
+        return {'central_value': emulator_central_value, 'cov': emulator_cov}
+
+    # Case 2: PCA is ON
     emulator_central_value = np.zeros((n_samples, emulation_group_config.n_pc))
     emulator_variance = np.zeros((n_samples, emulation_group_config.n_pc))
     for i,emulator in enumerate(emulators):
@@ -259,6 +304,7 @@ class ConcreteEmulatorConfig:
     emulator_name: str
     base_config: EmulatorBaseConfig
     settings: dict[str, Any]
+    observable_slices: list[slice] = attrs.field(factory=list)
 
     @property
     def observable_filter(self) -> data_IO.ObservableFilter | None:
@@ -453,6 +499,23 @@ class EmulatorOrganizationConfig(common_base.CommonBase):
             )
             for k, group_cfg in analysis_config["parameters"]["emulators"].items()
         }
+
+        # Learn mapping to initialize observable_slices
+        # - Determine how each observable bin maps to the full matrix
+        # - Figure out where each group’s observables live in the full output array
+        # - Return a mapping object (sorter) that can help in matrix construction
+        sorter = SortEmulationGroupObservables.learn_mapping(c)
+        c._sort_observables_in_matrix = sorter
+
+        # Assign observable_slices to each group config
+        # For each observable, assign its slice (a range of indices) to the right group config
+        # These slices are used only if PCA is disabled, to emulate each slice separately
+        for observable_key, (group_name, _, slice_in_group) in sorter.emulation_group_to_observable_matrix.items():
+            group_config = c.emulation_groups_config[group_name]
+            if not hasattr(group_config, "observable_slices"):
+                group_config.observable_slices = []
+            group_config.observable_slices.append(slice_in_group)
+
         return c
 
     def read_all_emulator_groups(self) -> dict[str, dict[str, npt.NDArray[np.float64]]]:
@@ -683,7 +746,16 @@ def compute_emulator_group_cov_unexplained(emulation_group_config, emulation_gro
 
     We will generally pre-compute this once in mcmc.py to save time, although we define this function
     here to allow us to re-compute it as needed if it is not pre-computed (e.g. when plotting).
+
+    LDU, May 2025: If PCA is disabled, we return a zero matrix of shape (n_features, n_features).
     '''
+    if emulation_group_config.n_pc is None:
+        # PCA is disabled, return zero covariance
+        slices = emulation_group_config.observable_slices
+        n_features = sum(s.stop - s.start for s in slices)
+        return np.zeros((n_features, n_features))
+
+    # PCA is enabled, compute unexplained covariance from truncated PCs
     # TODO: NOTE-STAT: Compare this more carefully with STAT L145 and on.
     pca = emulation_group_result['PCA']['pca']
     S_unexplained = pca.components_.T[:,emulation_group_config.n_pc:]

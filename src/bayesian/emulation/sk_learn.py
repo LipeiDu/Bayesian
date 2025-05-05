@@ -39,8 +39,16 @@ def fit_emulator_group(config: emulation_base.ConcreteEmulatorConfig) -> dict[st
     The emulators map design points to PCs; the output will need to be inverted from PCA space to physical space.
 
     :param EmulationConfig config: we take an instance of EmulationConfig as an argument to keep track of config info.
-    '''
 
+    LDU, May 2025: PCA disabled case is useful when considering model discrepancy
+    If PCA is enabled (config.n_pc is not None):
+        - Perform PCA on the entire observable matrix.
+        - Train one emulator per principal component.
+
+    If PCA is disabled (config.n_pc is None):
+        - Train one emulator per observable slice.
+        - No transformation into PCA space is performed.
+    '''
     # Check if emulator already exists
     if config.emulation_outputfile.exists():
         if config.force_retrain:
@@ -53,57 +61,7 @@ def fit_emulator_group(config: emulation_base.ConcreteEmulatorConfig) -> dict[st
     # Initialize predictions into a single 2D array: (design_point_index, observable_bins) i.e. (n_samples, n_features)
     # A consistent order of observables is enforced internally in data_IO
     # NOTE: One sample corresponds to one design point, while one feature is one bin of one observable
-    logger.info('Doing PCA...')
     Y = data_IO.predictions_matrix_from_h5(config.output_dir, filename=config.observables_filename, observable_filter=config.observable_filter)
-
-    # Use sklearn to:
-    #  - Center and scale each feature (and later invert)
-    #  - Perform PCA to reduce to config.n_pc features.
-    #      This amounts to finding the matrix S that diagonalizes the covariance matrix C = Y.T*Y = S*D^2*S.T
-    #      Or equivalently the right singular vectors S.T in the SVD decomposition of Y: Y = U*D*S.T
-    #      Given S, we can transform from feature space to PCA space with: Y_PCA = Y*S
-    #               and from PCA space to feature space with: Y = Y_PCA*S.T
-    #
-    # The input Y is a 2D array of format (n_samples, n_features).
-    #
-    # The output of pca.fit_transform() is a 2D array of format (n_samples, n_components),
-    #   which is equivalent to:
-    #     Y_pca = Y.dot(pca.components_.T), where:
-    #       pca.components_ are the principal axes, sorted by decreasing explained variance -- shape (n_components, n_features)
-    #     In the notation above, pca.components_ = S.T, i.e.
-    #       the rows of pca.components_ are the sorted eigenvectors of the covariance matrix of the scaled features.
-    #
-    # We can invert this back to the original feature space by: pca.inverse_transform(Y_pca),
-    #   which is equivalent to:
-    #     Y_reconstructed = Y_pca.dot(pca.components_)
-    #
-    # Then, we still need to make sure to undo the preprocessing (centering and scaling) by:
-    #     Y_reconstructed_unscaled = scaler.inverse_transform(Y_reconstructed)
-    #
-    # See docs for StandardScaler and PCA for further details.
-    # This post explains exactly what fit_transform,inverse_transform do: https://stackoverflow.com/a/36567821
-    #
-    # TODO: Do we want whiten the PCs, i.e. to scale the variances of each PC to 1?
-    #       I don't see a compelling reason to do this...We are fitting separate GPs to each PC,
-    #       so standardizing the variance of each PC is not important.
-    #       (NOTE: whitening can be done with whiten=True -- beware that inverse_transform also undoes whitening)
-    scaler = sklearn_preprocessing.StandardScaler()
-    # This adopts the sklearn convention, but then sets a max cap of 30 PCs (arbitrarily chosen) to
-    # reduce computation time.
-    max_n_components = config.max_n_components_to_calculate
-    if max_n_components is not None:
-        logger.info(f"Running with max n_pc={max_n_components}")
-    # NOTE-STAT: Whiten=True, but here, Whiten=False.
-    # NOTE-STAT: RJE thinks this doesn't matter, based on the comments above.
-    pca = sklearn_decomposition.PCA(n_components=max_n_components, svd_solver='full', whiten=False) # Include all PCs here, so we can access them later
-    # Scale data and perform PCA
-    Y_pca = pca.fit_transform(scaler.fit_transform(Y))
-    Y_pca_truncated = Y_pca[:,:config.n_pc]    # Select PCs here
-    # Invert PCA and undo the scaling
-    Y_reconstructed_truncated = Y_pca_truncated.dot(pca.components_[:config.n_pc,:])
-    Y_reconstructed_truncated_unscaled = scaler.inverse_transform(Y_reconstructed_truncated)
-    explained_variance_ratio = pca.explained_variance_ratio_
-    logger.info(f'  Variance explained by first {config.n_pc} components: {np.sum(explained_variance_ratio[:config.n_pc])}')
 
     # Get design
     design = data_IO.design_array_from_h5(config.output_dir, filename=config.observables_filename)
@@ -143,6 +101,79 @@ def fit_emulator_group(config: emulation_base.ConcreteEmulatorConfig) -> dict[st
                 noise_level_bounds=kernel_args["args"]["noise_level_bounds"],
             )
             kernel = (kernel + kernel_noise)
+
+    # --- CASE 1: PCA is DISABLED ---
+    if config.n_pc is None:
+        logger.info("PCA is OFF...")
+        logger.info("Training one emulator per observable slice")
+        slices = config.observable_slices
+        logger.info(f"Training {len(slices)} emulators")
+        if slices is None:
+            raise ValueError("[fit_emulator_group] PCA is off, but observable_slices is not defined.")
+
+        emulators = []
+        for s in slices:
+            y_slice = Y[:, s]
+            emulator = sklearn_gaussian_process.GaussianProcessRegressor(kernel=kernel,
+                                                                          alpha=config.alpha,
+                                                                          n_restarts_optimizer=config.n_restarts,
+                                                                          copy_X_train=False)
+            emulator.fit(design, y_slice)
+            emulators.append(emulator)
+
+        output_dict: dict[str, Any] = {"emulators": emulators}
+        return output_dict
+
+    # --- CASE 2: PCA is ENABLED ---
+    # Use sklearn to:
+    #  - Center and scale each feature (and later invert)
+    #  - Perform PCA to reduce to config.n_pc features.
+    #      This amounts to finding the matrix S that diagonalizes the covariance matrix C = Y.T*Y = S*D^2*S.T
+    #      Or equivalently the right singular vectors S.T in the SVD decomposition of Y: Y = U*D*S.T
+    #      Given S, we can transform from feature space to PCA space with: Y_PCA = Y*S
+    #               and from PCA space to feature space with: Y = Y_PCA*S.T
+    #
+    # The input Y is a 2D array of format (n_samples, n_features).
+    #
+    # The output of pca.fit_transform() is a 2D array of format (n_samples, n_components),
+    #   which is equivalent to:
+    #     Y_pca = Y.dot(pca.components_.T), where:
+    #       pca.components_ are the principal axes, sorted by decreasing explained variance -- shape (n_components, n_features)
+    #     In the notation above, pca.components_ = S.T, i.e.
+    #       the rows of pca.components_ are the sorted eigenvectors of the covariance matrix of the scaled features.
+    #
+    # We can invert this back to the original feature space by: pca.inverse_transform(Y_pca),
+    #   which is equivalent to:
+    #     Y_reconstructed = Y_pca.dot(pca.components_)
+    #
+    # Then, we still need to make sure to undo the preprocessing (centering and scaling) by:
+    #     Y_reconstructed_unscaled = scaler.inverse_transform(Y_reconstructed)
+    #
+    # See docs for StandardScaler and PCA for further details.
+    # This post explains exactly what fit_transform,inverse_transform do: https://stackoverflow.com/a/36567821
+    #
+    # TODO: Do we want whiten the PCs, i.e. to scale the variances of each PC to 1?
+    #       I don't see a compelling reason to do this...We are fitting separate GPs to each PC,
+    #       so standardizing the variance of each PC is not important.
+    #       (NOTE: whitening can be done with whiten=True -- beware that inverse_transform also undoes whitening)
+    logger.info('Doing PCA...')
+    scaler = sklearn_preprocessing.StandardScaler()
+    # This adopts the sklearn convention, but then sets a max cap of 30 PCs (arbitrarily chosen) to
+    # reduce computation time.
+    max_n_components = config.max_n_components_to_calculate
+    if max_n_components is not None:
+        logger.info(f"Running with max n_pc={max_n_components}")
+    # NOTE-STAT: Whiten=True, but here, Whiten=False.
+    # NOTE-STAT: RJE thinks this doesn't matter, based on the comments above.
+    pca = sklearn_decomposition.PCA(n_components=max_n_components, svd_solver='full', whiten=False) # Include all PCs here, so we can access them later
+    # Scale data and perform PCA
+    Y_pca = pca.fit_transform(scaler.fit_transform(Y))
+    Y_pca_truncated = Y_pca[:,:config.n_pc]    # Select PCs here
+    # Invert PCA and undo the scaling
+    Y_reconstructed_truncated = Y_pca_truncated.dot(pca.components_[:config.n_pc,:])
+    Y_reconstructed_truncated_unscaled = scaler.inverse_transform(Y_reconstructed_truncated)
+    explained_variance_ratio = pca.explained_variance_ratio_
+    logger.info(f'  Variance explained by first {config.n_pc} components: {np.sum(explained_variance_ratio[:config.n_pc])}')
 
     # Fit a GP (optimize the kernel hyperparameters) to map each design point to each of its PCs
     # Note that Y_PCA=(n_samples, n_components), so each PC corresponds to a row (i.e. a column of Y_PCA.T)

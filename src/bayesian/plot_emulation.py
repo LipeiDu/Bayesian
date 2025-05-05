@@ -43,15 +43,18 @@ def plot(config):
         if not os.path.exists(plot_dir):
             os.makedirs(plot_dir)
 
-        # PCA plots
         results = emulation_results[emulation_group_name]
-        _plot_pca_reconstruction_error(results, plot_dir, emulation_group_config)
-        _plot_pca_reconstruction_observables(results, emulation_group_config, plot_dir)
-        _plot_pca_reconstruction_observables_per_n_pc(results, emulation_group_config, plot_dir)
-        # TODO: These deserve to be a global plot. Also nice to have for the group
-        _plot_pca_explained_variance(results, plot_dir, emulation_group_config)
-        _plot_pca_reconstruction_error_by_feature(results, plot_dir, emulation_group_config)
-        _plot_pca_reconstruction_error_by_feature(results, plot_dir, emulation_group_config, fixed_y_range=True)
+        # PCA-related plots
+        if 'PCA' in results:
+            _plot_pca_reconstruction_error(results, plot_dir, emulation_group_config)
+            _plot_pca_reconstruction_observables(results, emulation_group_config, plot_dir)
+            _plot_pca_reconstruction_observables_per_n_pc(results, emulation_group_config, plot_dir)
+            # TODO: These deserve to be a global plot. Also nice to have for the group
+            _plot_pca_explained_variance(results, plot_dir, emulation_group_config)
+            _plot_pca_reconstruction_error_by_feature(results, plot_dir, emulation_group_config)
+            _plot_pca_reconstruction_error_by_feature(results, plot_dir, emulation_group_config, fixed_y_range=True)
+        else:
+            logger.info(f"PCA is disabled for group '{emulation_group_name}'. Skipping PCA plots.")
 
         # Emulator plots
         _plot_emulator_observables(results, emulation_group_config, plot_dir, validation_set=False)
@@ -324,14 +327,20 @@ def _plot_emulator_observables(results, config, plot_dir, validation_set=False):
         colors = [sns.xkcd_rgb['dark sky blue'], sns.xkcd_rgb['light blue']]
         filename = f'emulator_observables_validation_design_point{design_point_index}'
     else:
-        # Get PCA results -- 2D arrays: (design_point_index, observable_bins)
-        Y_reconstructed_truncated = results['PCA']['Y_reconstructed_truncated_unscaled']
-        # Translate matrix of stacked observables to a dict of matrices per observable
-        Y_dict_truncated_reconstructed = data_IO.observable_dict_from_matrix(Y_reconstructed_truncated, observables, validation_set=validation_set, observable_filter=config.observable_filter)
+        if 'PCA' in results:
+            # Get PCA results -- 2D arrays: (design_point_index, observable_bins)
+            Y_reconstructed_truncated = results['PCA']['Y_reconstructed_truncated_unscaled']
+            # Translate matrix of stacked observables to a dict of matrices per observable
+            Y_dict_truncated_reconstructed = data_IO.observable_dict_from_matrix(Y_reconstructed_truncated, observables, validation_set=validation_set, observable_filter=config.observable_filter)
 
-        plot_list = [Y_dict['central_value'], Y_dict_truncated_reconstructed['central_value'], emulator_predictions_dict['central_value']]
-        labels = [r'JETSCAPE', r'JETSCAPE (reconstructed)', r'Emulator']
-        colors = [sns.xkcd_rgb['dark sky blue'], sns.xkcd_rgb['denim blue'], sns.xkcd_rgb['light blue']]
+            plot_list = [Y_dict['central_value'], Y_dict_truncated_reconstructed['central_value'], emulator_predictions_dict['central_value']]
+            labels = [r'JETSCAPE', r'JETSCAPE (reconstructed)', r'Emulator']
+            colors = [sns.xkcd_rgb['dark sky blue'], sns.xkcd_rgb['denim blue'], sns.xkcd_rgb['light blue']]
+        else:
+            plot_list = [Y_dict['central_value'], emulator_predictions_dict['central_value']]
+            labels = [r'JETSCAPE', r'Emulator']
+            colors = [sns.xkcd_rgb['dark sky blue'], sns.xkcd_rgb['light blue']]
+
         filename = f'emulator_observables_training__design_point{design_point_index}'
 
     plot_utils.plot_observable_panels(plot_list, labels, colors, [design_point_index], config, plot_dir, filename, observable_filter=config.observable_filter)
