@@ -26,6 +26,7 @@ import yaml
 
 from bayesian import common_base, data_IO, log_posterior
 from bayesian.emulation import base
+from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,19 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
     names = config.analysis_config['parameterization'][config.parameterization]['names']
     parameter_min = config.analysis_config['parameterization'][config.parameterization]['min']
     parameter_max = config.analysis_config['parameterization'][config.parameterization]['max']
-    ndim = len(names)
 
-    # Load prior config if present
-    prior_config = config.analysis_config["parameterization"][config.parameterization].get("prior", None)
+    # Load prior config if present (model parameters only)
+    model_prior_config = config.analysis_config["parameterization"][config.parameterization].get("prior", None)
+
+    # Gather discrepancy settings per observable group
+    # Extend parameter lists with discrepancy hyperparameters: all model + discrepancy parameters
+    emulator_groups = config.analysis_config['parameters']['emulators']
+    discrepancy_config, names, parameter_min, parameter_max, combined_prior_config = parse_discrepancy_group_settings(
+        emulator_groups, names, parameter_min, parameter_max, model_prior_config
+    )
+
+    # Update ndim after possible extension from model discrepance parameters
+    ndim = len(names)
 
     # Load emulators
     emulation_config = base.EmulatorOrganizationConfig.from_config_file(
@@ -69,6 +79,9 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
     # because input and output directories are separated for inference workflows.
     experimental_results = data_IO.data_array_from_h5(config.input_analysis_dir, 'observables.h5', pseudodata_index=closure_index, observable_filter=emulation_config.observable_filter)
 
+    # Obtain observable x-coordinates needed for discrepancy kernel
+    observable_xcoords = build_observable_xcoords_per_group(config, emulation_config, experimental_results)
+
     if config.mcmc_package == "emcee":
         _run_using_emcee(
             config,
@@ -79,7 +92,10 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
             parameter_min,
             parameter_max,
             ndim,
-            prior_config,
+            combined_prior_config,
+            discrepancy_config,
+            observable_xcoords,
+            names,
             closure_index=closure_index,
         )
     elif config.mcmc_package == "pocoMC":
@@ -92,7 +108,7 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
             parameter_min,
             parameter_max,
             ndim,
-            prior_config,
+            combined_prior_config,
             closure_index=closure_index,
         )
     else:
@@ -162,6 +178,9 @@ def _run_using_emcee(
     parameter_max: npt.NDArray[np.float64],
     parameter_ndim: int,
     prior_config: dict | None,
+    discrepancy_config: dict,
+    observable_xcoords: dict,
+    names,
     closure_index: int,
 ) -> None:
     """Run emcee-based MCMC.
@@ -198,7 +217,9 @@ def _run_using_emcee(
         processes=n_processes,
         initializer=log_posterior.initialize_pool_variables,
         initargs=[
-            parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained, prior_config
+            parameter_min, parameter_max, emulation_config, emulation_results,
+            experimental_results, emulator_cov_unexplained, prior_config,
+            discrepancy_config, observable_xcoords, names
         ]) as pool:
 
         # Construct sampler (we create a dummy daughter class from emcee.EnsembleSampler, to add some logging info)

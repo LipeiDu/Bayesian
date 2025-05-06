@@ -2,10 +2,10 @@
 #-------------------------------------------
 # General parameters
 
-output_dir: '/rds/project/rds-hCZCEbPdvZ8/output/20230829-QM-test11'
+output_dir: '/rds/project/rds-hCZCEbPdvZ8/output/20230829-QM-test25'
 
 skip_standard_analyses: False
-skip_inference_workflows: False
+skip_inference_workflows: True
 
 #-------------------------------------------
 # Control parameters for items under "analyses"
@@ -17,7 +17,7 @@ run_closure_tests: True
 
 plot:
   input_data: False
-  emulators: False
+  emulators: True
   mcmc: True
   qhat: True
   closure_tests: True
@@ -238,6 +238,22 @@ analyses:
           observable_exclude_list:
             - "pt_y_atlas"
             - "2760__PbPb__inclusive_chjet__pt_alice"
+          discrepancy:
+            enabled: True
+            kernel_type: kernel1      # or "kernel2"
+            # Determine whether to include kernel parameters in MCMC
+            # If discrepancy is enabled and infer_hyperparameters is False, use fixed_params
+            # If discrepancy is enabled and infer_hyperparameters is True, specify discrepancy 
+            # hyperparameters by the prior below as part of Bayesian inference
+            infer_hyperparameters: False
+            parameter_names: ["c_bar", "length_scale", "r", "s"]
+            fixed_params: [1.0, 1.5, -1.0, 0.05]
+            min: [0.01, 0.1, 0.5, 0.0]
+            max: [5.0, 10.0, 3.0, 1.0]
+            prior:
+              type: ["uniform", "uniform", "uniform", "uniform"]
+              mean: [1.0, 1.5, null, null]
+              std: [0.5, 0.5, null, null]
       mcmc:
         <<: *default_mcmc_parameters
         n_walkers: 20
@@ -253,66 +269,88 @@ analyses:
       'chjet__pt_star__R0.4': [16, 100]
     plot_panel_shapes: [[3,3], [3,3], [3,3]]
 
-  analysis_jet_substructure:
-    parameters:
-      preprocessing:
-        <<: *default_preprocessing_parameters
-      emulators:
-        substructure_groomed_group:
-          <<: *default_emulator_parameters
-          emulator_name: sk_learn
-          n_pc: 11
-          observable_list:
-            - 'chjet__zg_'
-            - 'chjet__tg_'
-      mcmc:
-        <<: *default_mcmc_parameters
-        n_walkers: 20
-        n_burn_steps: 100
-        n_sampling_steps: 500
-      closure:
-        <<: *default_closure_parameters
-    <<: *model_base
-    cuts:
-      'chjet__pt_star__R0.2': [14, 100]
-      'chjet__pt_star__R0.4': [16, 100]
-    plot_panel_shapes: [[3,3], [3,3], [3,3], [3,3], [3,3]]
+  # analysis_jet_substructure:
+  #   parameters:
+  #     preprocessing:
+  #       <<: *default_preprocessing_parameters
+  #     emulators:
+  #       substructure_groomed_group:
+  #         <<: *default_emulator_parameters
+  #         emulator_name: sk_learn
+  #         n_pc: 11
+  #         observable_list:
+  #           - 'chjet__zg_'
+  #           - 'chjet__tg_'
+  #     mcmc:
+  #       <<: *default_mcmc_parameters
+  #       n_walkers: 20
+  #       n_burn_steps: 100
+  #       n_sampling_steps: 500
+  #     closure:
+  #       <<: *default_closure_parameters
+  #   <<: *model_base
+  #   cuts:
+  #     'chjet__pt_star__R0.2': [14, 100]
+  #     'chjet__pt_star__R0.4': [16, 100]
+  #   plot_panel_shapes: [[3,3], [3,3], [3,3], [3,3], [3,3]]
 
-  analysis_jet_and_jet_substructure:
-    parameters:
-      preprocessing:
-        <<: *default_preprocessing_parameters
-      emulators:
-        jet_group:
-          <<: *default_emulator_parameters
-          emulator_name: sk_learn
-          n_pc: 5
-          observable_list:
-            - 'jet__pt_'
-          observable_exclude_list:
-            - "pt_y_atlas"
-            - "2760__PbPb__inclusive_chjet__pt_alice"
-        substructure_groomed_group:
-          <<: *default_emulator_parameters
-          emulator_name: sk_learn
-          n_pc: 11
-          observable_list:
-            - 'chjet__zg_'
-            - 'chjet__tg_'
-      mcmc:
-        <<: *default_mcmc_parameters
-        n_walkers: 20
-        n_burn_steps: 100
-        n_sampling_steps: 500
-        compute_evidence: True
-        evidence_method: "harmonic_mean"      # or "laplace" or "none"
-      closure:
-        <<: *default_closure_parameters
-    <<: *model_base
-    cuts:
-      'chjet__pt_star__R0.2': [14, 100]
-      'chjet__pt_star__R0.4': [16, 100]
-    plot_panel_shapes: [[3,3], [3,3], [3,3]]
+  # analysis_jet_and_jet_substructure:
+  #   parameters:
+  #     preprocessing:
+  #       <<: *default_preprocessing_parameters
+  #     emulators:
+  #       jet_group:
+  #         <<: *default_emulator_parameters
+  #         emulator_name: sk_learn
+  #         n_pc: 5
+  #         observable_list:
+  #           - 'jet__pt_'
+  #         observable_exclude_list:
+  #           - "pt_y_atlas"
+  #           - "2760__PbPb__inclusive_chjet__pt_alice"
+  #         discrepancy:
+  #           enabled: True
+  #           kernel_type: kernel1      # or "kernel2"
+  #           infer_hyperparameters: True # whether to include kernel parameters in MCMC
+  #           parameter_names: ["c_bar", "length_scale", "r", "s"]
+  #           min: [0.01, 0.1, 0.5, 0.0]
+  #           max: [5.0, 10.0, 3.0, 1.0]
+  #           prior:
+  #             type: ["uniform", "uniform", "uniform", "uniform"]
+  #             mean: [1.0, 1.5, null, null]
+  #             std: [0.5, 0.5, null, null]
+  #           # infer_hyperparameters: False
+  #           # fixed_values:
+  #           #   c_bar: 1.0
+  #           #   length_scale: 1.5
+  #           #   r: 2.0
+  #           #   s: 0.05
+  #       substructure_groomed_group:
+  #         <<: *default_emulator_parameters
+  #         emulator_name: sk_learn
+  #         n_pc: 11
+
+  #         discrepancy:
+  #           enabled: True
+  #           kernel_type: kernel1      # or "kernel2"
+  #           infer_hyperparameters: True # whether to include kernel parameters in MCMC
+  #           parameter_names: ["c_bar", "length_scale", "r", "s"]
+  #           min: [0.01, 0.1, 0.5, 0.0]
+  #           max: [5.0, 10.0, 3.0, 1.0]
+  #     mcmc:
+  #       <<: *default_mcmc_parameters
+  #       n_walkers: 20
+  #       n_burn_steps: 100
+  #       n_sampling_steps: 500
+  #       compute_evidence: True
+  #       evidence_method: "harmonic_mean"      # or "laplace" or "none"
+  #     closure:
+  #       <<: *default_closure_parameters
+  #   <<: *model_base
+  #   cuts:
+  #     'chjet__pt_star__R0.2': [14, 100]
+  #     'chjet__pt_star__R0.4': [16, 100]
+  #   plot_panel_shapes: [[3,3], [3,3], [3,3]]
 
 inference_workflows:
   # make sure they have consistent setup

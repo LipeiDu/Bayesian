@@ -17,6 +17,7 @@ from scipy.stats import norm
 
 from bayesian.emulation import base
 from bayesian import prior as prior_module
+from bayesian.model_discrepancy import add_discrepancy_covariance_all_groups
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,16 @@ g_experimental_results: dict = None
 g_emulator_cov_unexplained: dict = None
 g_prior_config: dict = None
 g_log_prior_fn = None  # Prior callable loaded at init
+g_discrepancy_config: dict = {}
+g_observable_xcoords: dict = {}  # observable bin centers
+g_param_names: dict[str, list[int]] = {}
+g_model_param_indices: list[int] = []
+g_discrepancy_param_indices: dict[str, list[int]] = {}
+g_discrepancy_enabled: bool
 
-def initialize_pool_variables(local_min, local_max, local_emulation_config, local_emulation_results, local_experimental_results, local_emulator_cov_unexplained, local_prior_config) -> None:
+def initialize_pool_variables(local_min, local_max, local_emulation_config, local_emulation_results,local_experimental_results, local_emulator_cov_unexplained,
+    local_prior_config, local_discrepancy_config, local_observable_xcoords, param_names
+) -> None:
     global g_min  # noqa: PLW0603
     global g_max  # noqa: PLW0603
     global g_emulation_config  # noqa: PLW0603
@@ -39,6 +48,9 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     global g_emulator_cov_unexplained  # noqa: PLW0603
     global g_prior_config
     global g_log_prior_fn
+    global g_discrepancy_config, g_observable_xcoords, g_param_names
+    global g_model_param_indices, g_discrepancy_param_indices
+    global g_discrepancy_enabled
 
     g_min = local_min
     g_max = local_max
@@ -47,21 +59,39 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     g_experimental_results = local_experimental_results
     g_emulator_cov_unexplained = local_emulator_cov_unexplained
     g_prior_config = local_prior_config
+    g_discrepancy_config = local_discrepancy_config
+    g_observable_xcoords = local_observable_xcoords
+    g_param_names = param_names
 
-    # Initialize log prior function
-    if g_prior_config is not None:
-        if "prior_source" in g_prior_config:
-            logger.info("Loading prior from posterior file via KDE or Gaussian...")
-            g_log_prior_fn = prior_module.load_posterior_as_prior(
-                posterior_file=g_prior_config["prior_source"]["posterior_file"],
-                method=g_prior_config["prior_source"].get("method", "kde")
+    # Check whether any discrepancy group has inference enabled
+    g_discrepancy_enabled = any(cfg.get("infer", False) for cfg in g_discrepancy_config.values())
+
+    # Identify prefixes used for discrepancy parameters
+    # Discrepancy parameters are named with prefix: {group}__{param}
+    discrepancy_prefixes = {
+        f"{group}__" for group, cfg in g_discrepancy_config.items() if cfg.get("infer", False)
+    }
+
+    # Identify model parameters (those that do not start with any discrepancy prefix)
+    g_model_param_indices = [
+        i for i, name in enumerate(g_param_names)
+        if not any(name.startswith(prefix) for prefix in discrepancy_prefixes)
+    ]
+
+    # Identify discrepancy parameters by group, using sorted indices for consistency
+    g_discrepancy_param_indices = {}
+    for group, cfg in g_discrepancy_config.items():
+        if cfg.get("infer", False):
+            prefix = f"{group}__"
+            indices = sorted(
+                i for i, name in enumerate(g_param_names) if name.startswith(prefix)
             )
-        else:
-            # if specified: uniform, gaussian, log, etc.
-            g_log_prior_fn = lambda X: prior_module.log_prior(X, g_prior_config)
-    else:
-        # default: uniform prior
-        g_log_prior_fn = lambda X: np.zeros(X.shape[0])
+            g_discrepancy_param_indices[group] = indices
+            if not indices:
+                logger.warning(f"Group '{group}' has 'infer=True' but no matching parameters with prefix '{prefix}'")
+
+    # Build the prior function
+    g_log_prior_fn = prior_module.make_log_prior_fn(g_prior_config, g_param_names)
 
 #---------------------------------------------------------------
 def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDArray[np.float64]:
@@ -90,6 +120,8 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
     log_posterior[~inside] = -np.inf if set_to_infinite_outside_bounds else -1e300
 
     # Evaluate log-posterior for samples inside parameter bounds
+    # n_samples: number of design points = number of training samples
+    # n_features: total number of observables
     n_samples = np.count_nonzero(inside)
     n_features = g_experimental_results['y'].shape[0]
 
@@ -103,7 +135,10 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
         # Returns dict of matrices of emulator predictions:
         #     emulator_predictions['central_value'] -- (n_samples, n_features)
         #     emulator_predictions['cov'] -- (n_samples, n_features, n_features)
-        emulator_predictions = base.predict(X[inside], g_emulation_config,
+
+        # LDU: The discrepancy parameters are irrelavant to emulation
+        # X[inside][:, g_model_param_indices] ensures emulators only see the model parameters, excluding discrepancy parameters
+        emulator_predictions = base.predict(X[inside][:, g_model_param_indices], g_emulation_config,
                                                  emulation_group_results=g_emulation_results,
                                                  emulator_cov_unexplained=g_emulator_cov_unexplained)
 
@@ -112,12 +147,36 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
         assert data_y.shape[0] == emulator_predictions['central_value'].shape[1]
         dY = emulator_predictions['central_value'] - data_y
 
+        # Sanity check: emulator output should match the number of features expected from experimental data
+        assert emulator_predictions['central_value'].shape[1] == n_features, (
+            f"Mismatch in number of observables: emulator predicts {emulator_predictions['central_value'].shape[1]} "
+            f"but expected {n_features}. This may occur if PCA is active (reducing dimension), or if observable slicing "
+            f"is inconsistent. Ensure that n_pc is None for all groups if PCA is disabled, and observable filters match."
+        )
+
         # Construct the covariance matrix
         # NOTE-STAT TODO: include full experimental data covariance matrix -- currently we only include uncorrelated data uncertainty
         #-------------------------
         covariance_matrix = np.zeros((n_samples, n_features, n_features))
         covariance_matrix += emulator_predictions['cov']
         covariance_matrix += np.diag(data_y_err**2)
+
+        # Add model discrepancy covariance per group into each sample’s full covariance matrix.
+        # This accounts for systematic model deficiencies across kinematic regions.
+        # Inject discrepancy covariances per group, only if enabled
+        if g_discrepancy_enabled:
+            discrepancy_blocks = add_discrepancy_covariance_all_groups(
+                theta=X[inside],
+                discrepancy_config=g_discrepancy_config,
+                observable_xcoords=g_observable_xcoords,
+                emulation_config=g_emulation_config,
+                param_names=g_param_names,
+                n_features=n_features,
+                discrepancy_param_indices=g_discrepancy_param_indices
+            )
+
+            for i in range(n_samples):
+                covariance_matrix[i] += discrepancy_blocks[i]
 
         # Compute log likelihood at each point in the sample
         # We take constant priors, so the log-likelihood is just the log-posterior

@@ -12,6 +12,51 @@ import itertools
 logger = logging.getLogger(__name__)
 
 ########################################################################################################
+def make_log_prior_fn(prior_config: dict | None, param_names: list[str] | None = None) -> Callable[[np.ndarray], np.ndarray]:
+    """
+    Construct a log prior function given the YAML prior config.
+
+    Args:
+        prior_config (dict): Prior specification from YAML
+        param_names (list[str]): Names of all parameters in order (for logging)
+
+    Returns:
+        A callable log_prior_fn(X) that evaluates the log prior for a 2D array of samples.
+    """
+    if prior_config is None:
+        logger.info("Using default uniform priors for all parameters.")
+        return lambda X: np.zeros(np.atleast_2d(X).shape[0])
+
+    if "prior_source" in prior_config:
+        logger.info("Loading prior from posterior file via KDE or Gaussian...")
+        return load_posterior_as_prior(
+            posterior_file=prior_config["prior_source"]["posterior_file"],
+            method=prior_config["prior_source"].get("method", "kde"),
+        )
+
+    # Otherwise, it's manual per-parameter specification
+    types = prior_config.get("type", [])
+    means = prior_config.get("mean", [])
+    stds  = prior_config.get("std", [])
+
+    logger.info("Prior summary:")
+    for i in range(len(types)):
+        pname = param_names[i] if param_names and i < len(param_names) else f"param_{i}"
+        kind = types[i]
+        mean = means[i]
+        std  = stds[i]
+        if kind == "uniform":
+            logger.info(f"  {i:2d}: {pname:25s} | uniform")
+        elif kind == "log":
+            logger.info(f"  {i:2d}: {pname:25s} | log-prior")
+        elif kind == "gaussian":
+            logger.info(f"  {i:2d}: {pname:25s} | gaussian(mean={mean}, std={std})")
+        else:
+            logger.info(f"  {i:2d}: {pname:25s} | unknown type '{kind}'")
+
+    return lambda X: log_prior(X, prior_config)
+
+########################################################################################################
 def log_prior(X: npt.NDArray[np.float64], prior_config: dict | None) -> npt.NDArray[np.float64]:
     """
     Compute the log prior probability for each sample in X.
