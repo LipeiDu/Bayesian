@@ -48,26 +48,37 @@ def plot(config: mcmc.MCMCConfig):
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir)
 
+    # Load parameter names from file if saved (model + discrepancy)
+    if 'parameter_names' in results:
+        parameter_names = [s.decode() if isinstance(s, bytes) else s for s in results['parameter_names']]
+    else:
+        parameter_names = config.analysis_config['parameterization'][config.parameterization]['names']
+        logger.warning("parameter_names not found in MCMC file. Falling back to config-defined names.")
+
+    # Only model parameters
+    model_param_names = config.analysis_config['parameterization'][config.parameterization]['names']
+
     # Check that results match config file
     chain = results['chain']
     n_sampling_steps, n_walkers, n_dim = chain.shape
     logger.info(f'Plotting MCMC results for chain with n_walkers={n_walkers}, n_sampling_steps={n_sampling_steps}, n_dim={n_dim}')
     logger.info(f'Chain is of size: {os.path.getsize(config.mcmc_outputfile)/(1024*1024):.1f} MB')
+
     assert chain.shape[0] == config.n_sampling_steps
     assert chain.shape[1] == config.n_walkers
-    assert chain.shape[2] == len(config.analysis_config['parameterization'][config.parameterization]['names'])
+    assert chain.shape[2] == len(parameter_names)
 
     # MCMC plots
     _plot_acceptance_fraction(results['acceptance_fraction'], plot_dir, config)
     _plot_log_posterior(results['log_prob'], plot_dir, config)
-    _plot_autocorrelation_time(results, plot_dir, config)
-    _plot_posterior_pairplot(chain, plot_dir, config)
+    _plot_autocorrelation_time(results, plot_dir, parameter_names)
+    _plot_posterior_pairplot(chain, plot_dir, parameter_names)
 
     # Posterior vs. Design observables
     design = data_IO.design_array_from_h5(config.input_analysis_dir, filename=config.observables_filename)
-    _plot_design_pairplot(design, plot_dir, config)
+    _plot_design_pairplot(design, plot_dir, model_param_names)
     _plot_design_observables(design, plot_dir, config)
-    _plot_posterior_observables(chain, plot_dir, config)
+    _plot_posterior_observables(chain, plot_dir, config, parameter_names=parameter_names)
 
 
 #---------------------------------------------------------------
@@ -148,7 +159,7 @@ def _plot_log_posterior(log_posterior, plot_dir, config):
     plt.close()
 
 #---------------------------------------------------------------
-def _plot_autocorrelation_time(results, plot_dir, config):
+def _plot_autocorrelation_time(results, plot_dir, parameter_names):
     '''
     Plot autocorrelation time
 
@@ -209,8 +220,7 @@ def _plot_autocorrelation_time(results, plot_dir, config):
 
     # Bar plot
     plt.figure(figsize=(10, 6))
-    parameter_names = config.analysis_config['parameterization'][config.parameterization]['names']
-    labels = parameter_names + ['log_posterior']
+    labels = [s.decode() if isinstance(s, bytes) else str(s) for s in parameter_names] + ['log_posterior']
     plt.bar(labels, mean_autocorrelation_time, yerr=std_autocorrelation_time)
     plt.ylabel('Autocorrelation time')
     plt.title('Autocorrelation time (mean,stdev over walkers)')
@@ -233,7 +243,7 @@ def _plot_autocorrelation_time(results, plot_dir, config):
         plt.close()
 
 #---------------------------------------------------------------
-def _plot_posterior_pairplot(chain, plot_dir, config, holdout_test = False, holdout_point = None):
+def _plot_posterior_pairplot(chain, plot_dir, parameter_names, holdout_test = False, holdout_point = None):
     '''
     Plot posterior pairplot
     Optionally, we can also display the holdout point (if holdout_test = True)
@@ -243,12 +253,9 @@ def _plot_posterior_pairplot(chain, plot_dir, config, holdout_test = False, hold
     :param 1darray holdout_point (optional): point to display
     '''
 
-    # Flatten chain to shape (n_steps*n_walkers, n_dim)
-    samples = chain.reshape((chain.shape[0]*chain.shape[1], chain.shape[2]))
-
+    samples = chain.reshape((chain.shape[0] * chain.shape[1], chain.shape[2]))
     # Construct dataframe of samples
-    names = [rf'{s}' for s in config.analysis_config['parameterization'][config.parameterization]['names']]
-    df = pd.DataFrame(samples, columns=names)
+    df = pd.DataFrame(samples, columns=[s.decode() if isinstance(s, bytes) else str(s) for s in parameter_names])
 
     # Plot posterior pairplot
     g = sns.pairplot(df, diag_kind='kde',
@@ -290,7 +297,7 @@ def _plot_posterior_pairplot(chain, plot_dir, config, holdout_test = False, hold
         return theta_closure
 
 #---------------------------------------------------------------
-def _plot_design_pairplot(design, plot_dir, config):
+def _plot_design_pairplot(design, plot_dir, parameter_names):
     '''
     Plot design pairplot
 
@@ -298,8 +305,7 @@ def _plot_design_pairplot(design, plot_dir, config):
     '''
 
     # Construct dataframe of design points
-    names = [rf'{s}' for s in config.analysis_config['parameterization'][config.parameterization]['names']]
-    df = pd.DataFrame(design, columns=names)
+    df = pd.DataFrame(design, columns=parameter_names)
 
     # Take log of c1,c2,c3 since it is their log that is uniformly distributed
     for col in df.columns:
@@ -340,18 +346,23 @@ def _plot_design_observables(design, plot_dir, config):
     plot_utils.plot_observable_panels(plot_list, labels, colors, columns, config, plot_dir, filename, linewidth=1)
 
 #---------------------------------------------------------------
-def _plot_posterior_observables(chain, plot_dir, config, n_samples=200):
+def _plot_posterior_observables(chain, plot_dir, config, n_samples=200, parameter_names=None):
     '''
     Plot (emulated) observables at samples of posterior
 
     :param 3darray chain: positions of walkers at each step -- shape (n_steps, n_walkers, n_dim)
     :param int n_samples: number of posterior samples to plot
+    :param list[str] parameter_names: full list of parameter names (including discrepancy ones)
     '''
 
     # Flatten chain to shape (n_steps*n_walkers, n_dim), and sample parameters without replacement
     posterior = chain.reshape((chain.shape[0]*chain.shape[1], chain.shape[2]))
     idx = np.random.choice(posterior.shape[0], size=n_samples, replace=False)
-    posterior_samples = posterior[idx,:]
+
+    # extract model parameters only before prediction
+    model_param_names = config.analysis_config['parameterization'][config.parameterization]['names']
+    df_posterior = pd.DataFrame(posterior[idx, :], columns=parameter_names)
+    posterior_samples = df_posterior[model_param_names].to_numpy()
 
     # Get emulator predictions at these points
     observables = data_IO.read_dict_from_h5(config.input_analysis_dir, config.observables_filename, verbose=False)

@@ -16,7 +16,7 @@ from functools import partial
 
 import numpy as np
 import scipy
-
+import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
 sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize':18})
@@ -55,8 +55,10 @@ def plot(config):
     closure_summary[f'T{T}']['qhat_closure_array'] = np.zeros((n_design_points, n_x))
     closure_summary[f'T{T}']['qhat_mean'] = np.zeros((n_design_points, n_x))
 
-    parameter_names = [rf'{s}' for s in config.analysis_config['parameterization'][config.parameterization]['names']]
-    for parameter in parameter_names:
+    # get model-only parameter names
+    model_param_names = config.analysis_config['parameterization'][config.parameterization]['names']
+
+    for parameter in model_param_names:
         closure_summary[parameter] = {}
         closure_summary[parameter]['theta_truth'] = np.zeros((n_design_points))
         closure_summary[parameter]['theta_closure_array'] = np.zeros((n_design_points))
@@ -76,11 +78,16 @@ def plot(config):
         results = data_IO.read_dict_from_h5(result_dir, 'mcmc.h5', verbose=True)
 
         # Get posterior samples
+        parameter_names = results["parameter_names"].astype(str).tolist()  # stored in mcmc.h5
         n_walkers, n_steps, n_params = results['chain'].shape
-        posterior = results['chain'].reshape((n_walkers*n_steps, n_params))
+        posterior_full = results['chain'].reshape((n_walkers * n_steps, n_params))
+        posterior_df = pd.DataFrame(posterior_full, columns=parameter_names)
+        posterior = posterior_df[model_param_names].to_numpy()
 
         # Get target design point, so we can compute "true" qhat
-        target_design_point = results['design_point'].reshape((1, n_params))
+        target_design_point_full = results['design_point'].reshape((1, len(model_param_names)))
+        target_df = pd.DataFrame(target_design_point_full, columns=model_param_names)
+        target_design_point = target_df[model_param_names].to_numpy()
 
         # Plot qhat vs. T,E and return boolean array of whether target qhat is within credible interval
         # Then save relevant info to make summary plots over all closure points
@@ -100,9 +107,12 @@ def plot(config):
         closure_summary[f'T{T}']['cred_level'] = qhat_closure_dict['cred_level']
 
         # Compute the credible interval for the design parameter, and check whether target is within it
-        for i,parameter in enumerate(parameter_names):
+        for i,parameter in enumerate(model_param_names):
             chain = results['chain']
-            posterior = chain.reshape((chain.shape[0]*chain.shape[1], chain.shape[2]))
+            posterior_full = chain.reshape((chain.shape[0]*chain.shape[1], chain.shape[2]))
+            posterior_df = pd.DataFrame(posterior_full, columns=parameter_names)
+            posterior = posterior_df[model_param_names].to_numpy()
+
             idx = np.random.choice(posterior.shape[0], size=n_theta_samples, replace=False)
             posterior_samples = posterior[idx,:]
             credible_interval = mcmc.credible_interval(posterior_samples[:,i], confidence=cred_level)
@@ -122,7 +132,7 @@ def plot(config):
             _plot_closure_summary_qhat(key, qhat_closure_dict, plot_dir)
 
     # Plot as a function of design parameters
-    for i,parameter in enumerate(parameter_names):
+    for i,parameter in enumerate(model_param_names):
         _plot_closure_summary_theta(closure_summary[parameter], parameter, i, cred_level, E, T, config, plot_dir)
 
 #---------------------------------------------------------------

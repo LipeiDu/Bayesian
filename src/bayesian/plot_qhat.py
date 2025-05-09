@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
 import seaborn as sns
+import pandas as pd
 
 from bayesian import data_IO, mcmc, plot_utils
 from bayesian.emulation import base
@@ -38,17 +39,22 @@ def plot(config):
     results = data_IO.read_dict_from_h5(config.output_dir, config.mcmc_outputfilename, verbose=True)
     n_walkers, n_steps, n_params = results['chain'].shape
     posterior = results['chain'].reshape((n_walkers*n_steps, n_params))
+    parameter_names = results['parameter_names'].astype(str).tolist()
+    model_param_names = config.analysis_config['parameterization'][config.parameterization]['names']
+
+    posterior_df = pd.DataFrame(posterior, columns=parameter_names)
+    model_samples = posterior_df[model_param_names].to_numpy()
 
     # Plot output dir
     plot_dir = Path(config.output_dir) / 'plot_qhat'
     plot_dir.mkdir(parents=True, exist_ok=True)
 
     # qhat plots
-    plot_qhat(posterior, plot_dir, config, E=100, cred_level=0.9, n_samples=1000)
-    plot_qhat(posterior, plot_dir, config, T=0.3, cred_level=0.9, n_samples=1000)
+    plot_qhat(model_samples, plot_dir, config, E=100, cred_level=0.9, n_samples=1000)
+    plot_qhat(model_samples, plot_dir, config, T=0.3, cred_level=0.9, n_samples=1000)
 
     # Observable sensitivity plots
-    _plot_observable_sensitivity(posterior, plot_dir, config, delta=0.1, n_samples=1000)
+    _plot_observable_sensitivity(model_samples, plot_dir, config, delta=0.1, n_samples=1000)
 
 #---------------------------------------------------------------[]
 def plot_qhat(posterior, plot_dir, config, E=0, T=0, cred_level=0., n_samples=5000, n_x=50,

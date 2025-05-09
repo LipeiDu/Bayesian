@@ -275,6 +275,7 @@ def _run_using_emcee(
         # Write to file
         logger.info('Writing chain to file...')
         output_dict = {}
+        output_dict['parameter_names'] = np.array(names, dtype='S') # model + discrepancy hyper (if enabled) parameters
         output_dict['chain'] = sampler.get_chain()
         output_dict['acceptance_fraction'] = sampler.acceptance_fraction
         output_dict['log_prob'] = sampler.get_log_prob()
@@ -300,6 +301,7 @@ def _run_using_emcee(
             design_point =  data_IO.design_array_from_h5(config.input_analysis_dir, filename='observables.h5', validation_set=True)[closure_index]
             output_dict['design_point'] = design_point
             output_dict['experimental_pseudodata'] = experimental_results
+        output_dict['parameter_names'] = np.array(names, dtype='S')
         data_IO.write_dict_to_h5(output_dict, config.mcmc_output_dir, 'mcmc.h5', verbose=True)
 
         # Save posterior to posterior.h5
