@@ -13,7 +13,7 @@ import yaml
 from pathlib import Path
 
 from bayesian import data_IO, preprocess_input_data, mcmc
-from bayesian import plot_input_data, plot_emulation, plot_mcmc, plot_qhat, plot_closure, plot_analyses
+from bayesian import plot_input_data, plot_emulation, plot_mcmc, plot_qhat, plot_closure, plot_analyses, plot_discrepancy
 
 from bayesian import common_base, helpers
 from bayesian.emulation import base
@@ -90,6 +90,7 @@ class SteerAnalysis(common_base.CommonBase):
             if self.inference_workflows and not self.skip_inference_workflows:
                 self._run_inference_workflows(progress)
 
+    #---------------------------------------------------------------
     # Standard Bayesian inference
     def _run_standard_analyses(self, progress):
 
@@ -120,6 +121,7 @@ class SteerAnalysis(common_base.CommonBase):
             progress.update(parameterization_task, visible=False)
             progress.update(analysis_task, advance=1)
 
+    #---------------------------------------------------------------
     # Combined analyses, such as two-step inference and joint calibration
     def _run_inference_workflows(self, progress):
         process_inference_workflow(
@@ -292,6 +294,17 @@ class SteerAnalysis(common_base.CommonBase):
                                                 analysis_config=analysis_config,
                                                 config_file=self.config_file)
                     plot_closure.plot(mcmc_config)
+                    logger.info(f'Done!')
+                    logger.info("")
+
+                if self.plot.get('discrepancy', False):
+                    logger.info('------------------------------------------------------------------------')
+                    logger.info(f'Plotting discrepancy effects {analysis_name}_{parameterization}...')
+                    mcmc_config = mcmc.MCMCConfig(analysis_name=analysis_name,
+                                                parameterization=parameterization,
+                                                analysis_config=analysis_config,
+                                                config_file=self.config_file)
+                    plot_discrepancy.plot(mcmc_config)
                     logger.info(f'Done!')
                     logger.info("")
 

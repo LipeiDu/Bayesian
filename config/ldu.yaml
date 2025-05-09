@@ -2,7 +2,7 @@
 #-------------------------------------------
 # General parameters
 
-output_dir: '/rds/project/rds-hCZCEbPdvZ8/output/20230829-QM-test25'
+output_dir: '/rds/project/rds-hCZCEbPdvZ8/output/20230829-QM-test30'
 
 skip_standard_analyses: False
 skip_inference_workflows: True
@@ -22,6 +22,7 @@ plot:
   qhat: True
   closure_tests: True
   across_analyses: False
+  discrepancy: True
 
 debug_level: 0
 
@@ -254,6 +255,19 @@ analyses:
               type: ["uniform", "uniform", "uniform", "uniform"]
               mean: [1.0, 1.5, null, null]
               std: [0.5, 0.5, null, null]
+        substructure_groomed_group:
+          <<: *default_emulator_parameters
+          emulator_name: sk_learn
+          n_pc: 5
+          observable_list:
+            - 'chjet__zg_'
+            - 'chjet__tg_'
+          discrepancy:
+            enabled: True
+            kernel_type: kernel1      # or "kernel2"
+            infer_hyperparameters: False # whether to include kernel parameters in MCMC
+            parameter_names: ["c_bar", "length_scale", "r", "s"]
+            fixed_params: [1.0, 1.5, -1.0, 0.05]
       mcmc:
         <<: *default_mcmc_parameters
         n_walkers: 20

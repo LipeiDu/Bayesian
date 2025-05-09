@@ -26,7 +26,7 @@ import yaml
 
 from bayesian import common_base, data_IO, log_posterior
 from bayesian.emulation import base
-from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group
+from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group, precompute_and_save_discrepancy_kernels
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
     # Gather discrepancy settings per observable group
     # Extend parameter lists with discrepancy hyperparameters: all model + discrepancy parameters
     emulator_groups = config.analysis_config['parameters']['emulators']
-    discrepancy_config, names, parameter_min, parameter_max, combined_prior_config = parse_discrepancy_group_settings(
+    names, parameter_min, parameter_max, combined_prior_config, discrepancy_config, discrepancy_enabled_groups = parse_discrepancy_group_settings(
         emulator_groups, names, parameter_min, parameter_max, model_prior_config
     )
 
@@ -82,6 +82,11 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
     # Obtain observable x-coordinates needed for discrepancy kernel
     observable_xcoords = build_observable_xcoords_per_group(config, emulation_config, experimental_results)
 
+    # Save discrepancy kernels for plotting; skip when doing closure tests
+    if closure_index < 0 and discrepancy_enabled_groups:
+        logger.info(f"[Discrepancy] Enabled for groups: {discrepancy_enabled_groups}. Precomputing kernels.")
+        precompute_and_save_discrepancy_kernels(config, experimental_results, observable_xcoords, discrepancy_enabled_groups)
+
     if config.mcmc_package == "emcee":
         _run_using_emcee(
             config,
@@ -96,6 +101,7 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
             discrepancy_config,
             observable_xcoords,
             names,
+            discrepancy_enabled_groups,
             closure_index=closure_index,
         )
     elif config.mcmc_package == "pocoMC":
@@ -181,6 +187,7 @@ def _run_using_emcee(
     discrepancy_config: dict,
     observable_xcoords: dict,
     names,
+    discrepancy_enabled_groups: list[str],
     closure_index: int,
 ) -> None:
     """Run emcee-based MCMC.
@@ -219,7 +226,7 @@ def _run_using_emcee(
         initargs=[
             parameter_min, parameter_max, emulation_config, emulation_results,
             experimental_results, emulator_cov_unexplained, prior_config,
-            discrepancy_config, observable_xcoords, names
+            discrepancy_config, observable_xcoords, names, discrepancy_enabled_groups
         ]) as pool:
 
         # Construct sampler (we create a dummy daughter class from emcee.EnsembleSampler, to add some logging info)

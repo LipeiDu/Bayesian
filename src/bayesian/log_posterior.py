@@ -38,7 +38,7 @@ g_discrepancy_param_indices: dict[str, list[int]] = {}
 g_discrepancy_enabled: bool
 
 def initialize_pool_variables(local_min, local_max, local_emulation_config, local_emulation_results,local_experimental_results, local_emulator_cov_unexplained,
-    local_prior_config, local_discrepancy_config, local_observable_xcoords, param_names
+    local_prior_config, local_discrepancy_config, local_observable_xcoords, param_names, local_discrepancy_enabled
 ) -> None:
     global g_min  # noqa: PLW0603
     global g_max  # noqa: PLW0603
@@ -62,14 +62,12 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     g_discrepancy_config = local_discrepancy_config
     g_observable_xcoords = local_observable_xcoords
     g_param_names = param_names
-
-    # Check whether any discrepancy group has inference enabled
-    g_discrepancy_enabled = any(cfg.get("infer", False) for cfg in g_discrepancy_config.values())
+    g_discrepancy_enabled = local_discrepancy_enabled
 
     # Identify prefixes used for discrepancy parameters
     # Discrepancy parameters are named with prefix: {group}__{param}
     discrepancy_prefixes = {
-        f"{group}__" for group, cfg in g_discrepancy_config.items() if cfg.get("infer", False)
+        f"{group}__" for group, cfg in g_discrepancy_config.items() if cfg.get("infer_hyperparameters", False)
     }
 
     # Identify model parameters (those that do not start with any discrepancy prefix)
@@ -81,7 +79,7 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     # Identify discrepancy parameters by group, using sorted indices for consistency
     g_discrepancy_param_indices = {}
     for group, cfg in g_discrepancy_config.items():
-        if cfg.get("infer", False):
+        if cfg.get("infer_hyperparameters", False):
             prefix = f"{group}__"
             indices = sorted(
                 i for i, name in enumerate(g_param_names) if name.startswith(prefix)
@@ -172,7 +170,12 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
                 emulation_config=g_emulation_config,
                 param_names=g_param_names,
                 n_features=n_features,
-                discrepancy_param_indices=g_discrepancy_param_indices
+                discrepancy_param_indices=g_discrepancy_param_indices,
+                output_dir=None,
+                diag_emulator_cov = None,
+                diag_exp_cov = None,
+                discrepancy_enabled_groups=g_discrepancy_enabled,
+                group_metadata = None
             )
 
             for i in range(n_samples):
