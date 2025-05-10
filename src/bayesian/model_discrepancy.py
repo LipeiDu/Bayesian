@@ -4,7 +4,6 @@ import numpy.typing as npt
 from dataclasses import dataclass
 from typing import Literal, Callable, Any, Optional
 from collections import Counter
-from typing import Any
 from bayesian.emulation import base
 from bayesian import data_IO
 import h5py
@@ -124,22 +123,15 @@ def add_discrepancy_covariance_all_groups(
     n_features: int,
     discrepancy_param_indices: dict[str, list[int]],
     *,
-    output_dir: Optional[str] = None,
-    diag_emulator_cov: Optional[dict[str, np.ndarray]] = None,
-    diag_exp_cov: Optional[dict[str, np.ndarray]] = None,
-    discrepancy_enabled_groups: Optional[list[str]] = None,
-    group_metadata: Optional[dict[str, dict[str, Any]]] = None
+    discrepancy_enabled_groups: Optional[list[str]] = None
 ) -> dict[int, np.ndarray]:
     """
     Build discrepancy covariance blocks for all observable groups and return
     a dict mapping sample index → discrepancy covariance matrix (n_features, n_features).
-    Optionally saves precomputed kernels if output_dir is provided.
+    Used during MCMC sampling — no saving or plotting.
     """
     n_samples = theta.shape[0]
     discrepancy_blocks = {}
-
-    # Cache fixed kernels
-    cached_kernels: dict[str, np.ndarray] = {}
 
     for i in range(n_samples):
         total_cov = np.zeros((n_features, n_features))
@@ -153,26 +145,21 @@ def add_discrepancy_covariance_all_groups(
             x_coords = observable_xcoords[group_name]
 
             # Get observable slices for this group
-            if group_metadata is not None and group_name in group_metadata:
-                slices = group_metadata[group_name]["observable_slices"]
-            else:
-                # Assume emulation_config contains minimal info
-                slices = getattr(emulation_config.emulation_groups_config[group_name], "observable_slices", None)
-                if slices is None:
-                    raise RuntimeError(f"Missing observable_slices for group '{group_name}'")
+            slices = getattr(emulation_config.emulation_groups_config[group_name], "observable_slices", None)
+            if slices is None:
+                raise RuntimeError(f"Missing observable_slices for group '{group_name}'")
 
-            feature_indices = [s.start + i for s in slices for i in range(s.stop - s.start)]
+            # Ensure all slices are Python slice objects
+            if slices and isinstance(slices[0], (list, tuple, np.ndarray)):
+                slices = [slice(int(s[0]), int(s[1])) for s in slices]
+
+            feature_indices = [s.start + j for s in slices for j in range(s.stop - s.start)]
             idxs = np.array(feature_indices)
 
             try:
-                # Use cached kernel if fixed
+                # Fixed or inferred kernel parameters
                 if not cfg["infer_hyperparameters"]:
-                    if group_name not in cached_kernels:
-                        kernel = build_discrepancy_covariance_matrix(
-                            x_coords, cfg["kernel_type"], cfg["fixed_params"]
-                        )
-                        cached_kernels[group_name] = kernel
-                    cov_d = cached_kernels[group_name]
+                    kernel_params = cfg["fixed_params"]
                 else:
                     theta_vals = theta[i, discrepancy_param_indices[group_name]]
                     kernel_params = DiscrepancyKernelParams(
@@ -181,11 +168,12 @@ def add_discrepancy_covariance_all_groups(
                         r=theta_vals[2],
                         s=theta_vals[3] if len(theta_vals) > 3 else 0.0
                     )
-                    cov_d = build_discrepancy_covariance_matrix(
-                        x_coords, cfg["kernel_type"], kernel_params
-                    )
 
-                # -------- Safeguard checks on cov_d --------
+                cov_d = build_discrepancy_covariance_matrix(
+                    x_coords, cfg["kernel_type"], kernel_params
+                )
+
+                # Basic checks
                 if cov_d.ndim != 2 or cov_d.shape[0] != cov_d.shape[1]:
                     logger.warning(f"[WARNING] Invalid shape for discrepancy covariance in group '{group_name}': {cov_d.shape}")
                     continue
@@ -198,7 +186,6 @@ def add_discrepancy_covariance_all_groups(
                 if np.any(np.linalg.eigvalsh(cov_d) < -1e-12):
                     logger.warning(f"[WARNING] Discrepancy covariance for group '{group_name}' is not positive semi-definite.")
                     continue
-                # -------------------------------------------
 
                 total_cov[np.ix_(idxs, idxs)] += cov_d
 
@@ -208,164 +195,10 @@ def add_discrepancy_covariance_all_groups(
 
         discrepancy_blocks[i] = total_cov
 
-    # Save kernels only if requested
-    if output_dir:
-        if group_metadata is None:
-            raise RuntimeError("group_metadata must be provided to save discrepancy kernels.")
-        save_path = os.path.join(output_dir, 'discrepancy_kernels.h5')
-        save_discrepancy_kernels_h5(
-            save_path=save_path,
-            cached_kernels=cached_kernels,
-            observable_xcoords=observable_xcoords,
-            group_metadata=group_metadata,
-            diag_emulator_cov=diag_emulator_cov,
-            diag_exp_cov=diag_exp_cov,
-            discrepancy_enabled_groups=discrepancy_enabled_groups
-        )
-
     return discrepancy_blocks
 
 ########################################################################################################
-def save_discrepancy_kernels_h5(
-    save_path: str,
-    cached_kernels: dict[str, np.ndarray],
-    observable_xcoords: dict[str, np.ndarray],
-    group_metadata: dict[str, dict[str, Any]],
-    diag_emulator_cov: Optional[dict[str, np.ndarray]] = None,
-    diag_exp_cov: Optional[dict[str, np.ndarray]] = None,
-    discrepancy_enabled_groups: Optional[list[str]] = None
-):
-    """
-    Save discrepancy kernel matrices and metadata to HDF5.
-    """
-    logger.info(f"[Discrepancy] Saving kernels to {save_path}")
-
-    with h5py.File(save_path, 'w') as f:
-        for group_name, kernel in cached_kernels.items():
-            if discrepancy_enabled_groups and group_name not in discrepancy_enabled_groups:
-                continue
-
-            group = f.create_group(group_name)
-            group.create_dataset("kernel_matrix", data=kernel)
-            group.create_dataset("x_coords", data=observable_xcoords[group_name])
-
-            slice_array = np.array([[s.start, s.stop] for s in group_metadata[group_name]["observable_slices"]])
-            label_array = np.array(group_metadata[group_name]["observable_labels"], dtype=h5py.string_dtype())
-
-            group.create_dataset("observable_slices", data=slice_array)
-            group.create_dataset("observable_labels", data=label_array)
-
-            if diag_emulator_cov and group_name in diag_emulator_cov:
-                group.create_dataset("diag_emulator_cov", data=diag_emulator_cov[group_name])
-            if diag_exp_cov and group_name in diag_exp_cov:
-                group.create_dataset("diag_exp_cov", data=diag_exp_cov[group_name])
-
-########################################################################################################
-def precompute_and_save_discrepancy_kernels(
-    config,
-    experimental_results,
-    observable_xcoords,
-    discrepancy_enabled_groups: list[str]
-):
-    """
-    Precompute and save discrepancy kernels using a mid-range theta point.
-    Called before MCMC sampling begins to support plotting.
-    """
-    from bayesian.emulation.base import SortEmulationGroupObservables
-
-    # Get base parameter info
-    names = config.analysis_config['parameterization'][config.parameterization]['names']
-    parameter_min = config.analysis_config['parameterization'][config.parameterization]['min']
-    parameter_max = config.analysis_config['parameterization'][config.parameterization]['max']
-    model_prior_config = config.analysis_config["parameterization"][config.parameterization].get("prior", None)
-    emulator_groups = config.analysis_config['parameters']['emulators']
-
-    # Extend parameter list with discrepancy if applicable
-    names, parameter_min, parameter_max, _, discrepancy_config, _ = parse_discrepancy_group_settings(
-        emulator_groups, names, parameter_min, parameter_max, model_prior_config
-    )
-
-    param_names = names
-    n_params = len(param_names)
-
-    # Build dummy theta (mid-point)
-    theta = np.array([(lo + hi) / 2 for lo, hi in zip(parameter_min, parameter_max)])
-    theta = theta[None, :]  # Shape (1, n_params)
-
-    # Classify indices
-    discrepancy_param_indices = {}
-    model_param_indices = []
-    for i, name in enumerate(param_names):
-        for group in discrepancy_config:
-            prefix = f"{group}__"
-            if name.startswith(prefix):
-                discrepancy_param_indices.setdefault(group, []).append(i)
-                break
-        else:
-            model_param_indices.append(i)
-
-    # Load emulation config
-    emulation_config = base.EmulatorOrganizationConfig.from_config_file(
-        analysis_name=config.analysis_name,
-        parameterization=config.parameterization,
-        config_file=config.config_file,
-        analysis_config=config.analysis_config,
-    )
-
-    # Learn full observable mapping
-    mapping_obj = SortEmulationGroupObservables.learn_mapping(emulation_config)
-
-    # Build group → metadata mapping (slices, labels)
-    group_metadata: dict[str, dict[str, Any]] = {}
-    for observable_name, (group_name, global_slice, _) in mapping_obj.emulation_group_to_observable_matrix.items():
-        if group_name not in group_metadata:
-            group_metadata[group_name] = {
-                "observable_slices": [],
-                "observable_labels": []
-            }
-        group_metadata[group_name]["observable_slices"].append(global_slice)
-        group_metadata[group_name]["observable_labels"].append(observable_name)
-
-    # Run emulator at dummy theta
-    emulator_predictions = base.predict(
-        theta[:, model_param_indices],
-        emulation_config=emulation_config,
-        emulator_cov_unexplained=None
-    )
-
-    # Extract global diagonals
-    diag_emul = np.diagonal(emulator_predictions['cov'][0])     # shape: (n_features,)
-    diag_exp = experimental_results['y_err'] ** 2               # shape: (n_features,)
-
-    # Extract per-group diagonals using slices
-    diag_emul_group = {}
-    diag_exp_group = {}
-    for group in discrepancy_enabled_groups:
-        slices = group_metadata[group]["observable_slices"]
-        indices = [i for s in slices for i in range(s.start, s.stop)]
-        diag_emul_group[group] = diag_emul[indices]
-        diag_exp_group[group] = diag_exp[indices]
-
-    n_features = experimental_results['y'].shape[0]
-
-    logger.info("[Discrepancy] Precomputing and saving discrepancy kernels...")
-    _ = add_discrepancy_covariance_all_groups(
-        theta=theta,
-        discrepancy_config=discrepancy_config,
-        observable_xcoords=observable_xcoords,
-        emulation_config=emulation_config,
-        param_names=param_names,
-        n_features=n_features,
-        discrepancy_param_indices=discrepancy_param_indices,
-        output_dir=config.output_dir,
-        diag_emulator_cov=diag_emul_group,
-        diag_exp_cov=diag_exp_group,
-        discrepancy_enabled_groups=discrepancy_enabled_groups,
-        group_metadata=group_metadata
-    )
-
-########################################################################################################
-def parse_discrepancy_config(config_dict: dict) -> tuple[KernelType, DiscrepancyKernelParams | None, bool]:
+def parse_discrepancy_config(config_dict: dict, group_name: str) -> tuple[KernelType, DiscrepancyKernelParams | None, bool]:
     """
     Parse discrepancy kernel settings from YAML config.
     Returns kernel_type, kernel_params (or None), and infer_flag.
@@ -378,13 +211,15 @@ def parse_discrepancy_config(config_dict: dict) -> tuple[KernelType, Discrepancy
         param_names = config_dict.get("parameter_names", [])
         if not param_names:
             raise ValueError("You must provide parameter_names if infer_hyperparameters: True")
-        logger.info(f"Inference enabled for discrepancy hyperparameters: {param_names}")
+        logger.info(f"Inference enabled for group: {group_name} with discrepancy hyperparameters: {param_names}")
 
         return kernel_type, None, True
 
     # 2. For fixed mode
     fixed_values = config_dict.get("fixed_params", [])
     param_names = config_dict.get("parameter_names", [])
+
+    logger.info(f"Inference disabled for group: {group_name} with fixed discrepancy hyperparameters: {param_names}")
 
     if not fixed_values or len(fixed_values) < 3:
         raise ValueError("Missing or incomplete 'fixed_params' for discrepancy kernel")
@@ -440,7 +275,7 @@ def parse_discrepancy_group_settings(
         disc_cfg = group_cfg.get("discrepancy", {})
         if disc_cfg.get("enabled", False):
             discrepancy_enabled_groups.append(group_name)
-            kernel_type, fixed_params, infer_flag = parse_discrepancy_config(disc_cfg)
+            kernel_type, fixed_params, infer_flag = parse_discrepancy_config(disc_cfg, group_name)
 
             if infer_flag:
                 param_names = disc_cfg["parameter_names"]

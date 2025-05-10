@@ -171,11 +171,7 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
                 param_names=g_param_names,
                 n_features=n_features,
                 discrepancy_param_indices=g_discrepancy_param_indices,
-                output_dir=None,
-                diag_emulator_cov = None,
-                diag_exp_cov = None,
                 discrepancy_enabled_groups=g_discrepancy_enabled,
-                group_metadata = None
             )
 
             for i in range(n_samples):

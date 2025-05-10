@@ -26,7 +26,7 @@ import yaml
 
 from bayesian import common_base, data_IO, log_posterior
 from bayesian.emulation import base
-from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group, precompute_and_save_discrepancy_kernels
+from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,6 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
 
     # Obtain observable x-coordinates needed for discrepancy kernel
     observable_xcoords = build_observable_xcoords_per_group(config, emulation_config, experimental_results)
-
-    # Save discrepancy kernels for plotting; skip when doing closure tests
-    if closure_index < 0 and discrepancy_enabled_groups:
-        logger.info(f"[Discrepancy] Enabled for groups: {discrepancy_enabled_groups}. Precomputing kernels.")
-        precompute_and_save_discrepancy_kernels(config, experimental_results, observable_xcoords, discrepancy_enabled_groups)
 
     if config.mcmc_package == "emcee":
         _run_using_emcee(
