@@ -2,7 +2,7 @@
 #-------------------------------------------
 # General parameters
 
-output_dir: '/rds/project/rds-hCZCEbPdvZ8/output/20230829-QM-test30'
+output_dir: '/rds/project/rds-hCZCEbPdvZ8/output/20230829-QM-test35'
 
 skip_standard_analyses: False
 skip_inference_workflows: True
@@ -246,11 +246,11 @@ analyses:
             # If discrepancy is enabled and infer_hyperparameters is False, use fixed_params
             # If discrepancy is enabled and infer_hyperparameters is True, specify discrepancy 
             # hyperparameters by the prior below as part of Bayesian inference
-            infer_hyperparameters: False
+            infer_hyperparameters: True
             parameter_names: ["c_bar", "length_scale", "r", "s"]
             fixed_params: [1.0, 1.5, -1.0, 0.05]
-            min: [0.01, 0.1, 0.5, 0.0]
-            max: [5.0, 10.0, 3.0, 1.0]
+            min: [0.01, 0.1, -2.0, 0.0]
+            max: [5.0, 10.0, -0.5, 1.0]
             prior:
               type: ["uniform", "uniform", "uniform", "uniform"]
               mean: [1.0, 1.5, null, null]
