@@ -160,10 +160,21 @@ def plot(config: base.EmulatorOrganizationConfig):
     # Plot output dir
     plot_dir = Path(config.output_dir) / 'plot_input_data'
     plot_dir.mkdir(parents=True, exist_ok=True)
+    preprocessed_observables_file = Path(config.output_dir) / "observables_preprocessed.h5"
+    has_preprocessed_observables = preprocessed_observables_file.exists()
+
+    observables = data_IO.read_dict_from_h5(config.output_dir, 'observables.h5', verbose=False)
+    n_training_design_points = len(observables.get("Design_indices", []))
+    n_validation_design_points = len(observables.get("Design_indices_validation", []))
+    validation_sets_to_plot = [False]
+    if n_validation_design_points > 0:
+        validation_sets_to_plot.append(True)
+    else:
+        logger.info("No validation design points found. Skipping validation-set input-data plots.")
 
     # Compare smoothed predictions for all design points
     # Start with individual so we can look in detail
-    for validation_set in [False, True]:
+    for validation_set in validation_sets_to_plot:
         _plot_predictions_for_all_design_points(
             config=config,
             plot_dir=plot_dir,
@@ -171,13 +182,16 @@ def plot(config: base.EmulatorOrganizationConfig):
             grid_size=(3, 3),
             validation_set=validation_set,
         )
-        _plot_predictions_for_all_design_points(
-            config=config,
-            plot_dir=plot_dir,
-            select_which_to_plot=["preprocessed"],
-            grid_size=(3, 3),
-            validation_set=validation_set,
-        )
+        if has_preprocessed_observables:
+            _plot_predictions_for_all_design_points(
+                config=config,
+                plot_dir=plot_dir,
+                select_which_to_plot=["preprocessed"],
+                grid_size=(3, 3),
+                validation_set=validation_set,
+            )
+        else:
+            logger.info("observables_preprocessed.h5 not found. Skipping preprocessed input-data plots.")
         ## And then combined for convenient comparison
         #_plot_predictions_for_all_design_points(
         #    config=config,
@@ -188,8 +202,9 @@ def plot(config: base.EmulatorOrganizationConfig):
         #)
 
     #for observables_filename in ["observables.h5", "observables_preprocessed.h5"]:
-    for observables_filename in ["observables_preprocessed.h5"]:
-        for validation_set in [True, False]:
+    observables_filenames = ["observables_preprocessed.h5"] if has_preprocessed_observables else ["observables.h5"]
+    for observables_filename in observables_filenames:
+        for validation_set in validation_sets_to_plot:
             ## First, plot the pair correlations for each observables
             #_plot_pairplot_correlations(
             #    config=config,
@@ -261,8 +276,15 @@ def _plot_predictions_for_all_design_points(
 
     # Grab the observables to compare
     all_observables = data_IO.read_dict_from_h5(config.output_dir, 'observables.h5')
-    all_observables_preprocessed = data_IO.read_dict_from_h5(config.output_dir, 'observables_preprocessed.h5')
+    preprocessed_path = Path(config.output_dir) / 'observables_preprocessed.h5'
+    all_observables_preprocessed = None
+    if preprocessed_path.exists():
+        all_observables_preprocessed = data_IO.read_dict_from_h5(config.output_dir, 'observables_preprocessed.h5')
     colors = [sns.xkcd_rgb['dark sky blue'], sns.xkcd_rgb['medium green']]
+
+    if "preprocessed" in select_which_to_plot and all_observables_preprocessed is None:
+        logger.info("observables_preprocessed.h5 not found. Skipping preprocessed prediction comparison plots.")
+        return
 
     sorted_observable_keys_iter = iter(list(data_IO.sorted_observable_list_from_dict( all_observables[prediction_key],)))
     counter = 0
@@ -281,9 +303,14 @@ def _plot_predictions_for_all_design_points(
             x = (xmin + xmax) / 2
             # Plot each design point separately
             observable = all_observables[prediction_key][observable_key]["y"]
-            observable_preprocessed = all_observables_preprocessed[prediction_key][observable_key]["y"]
+            observable_preprocessed = None
+            if all_observables_preprocessed is not None:
+                observable_preprocessed = all_observables_preprocessed[prediction_key][observable_key]["y"]
             for i_design_point in range(observable.shape[1]):
-                for label, color, obs in zip(["standard", "preprocessed"], colors, [observable, observable_preprocessed]):
+                observables_to_plot = [("standard", colors[0], observable)]
+                if observable_preprocessed is not None:
+                    observables_to_plot.append(("preprocessed", colors[1], observable_preprocessed))
+                for label, color, obs in observables_to_plot:
                     if label not in select_which_to_plot:
                         continue
                     ax.plot(
@@ -376,6 +403,10 @@ def _plot_pairplot_correlations(
     # k -> v is label -> design_points
     identified_outliers: dict[str, set[int]] = {}
     for i_group, (label, title, current_df) in enumerate(df_generator):
+        if current_df.empty or len(current_df.index) == 0:
+            logger.info(f"Skipping empty pairplot dataframe for {label=} ({validation_set=})")
+            continue
+
         logger.debug(f"Pair plotting columns: {current_df.columns=}")
 
         # Useful early stopping for debugging...
@@ -413,14 +444,11 @@ def _plot_pairplot_correlations(
 
                         fit_result = regression_results[(i_row, i_col)]
                         logger.debug(f"{fit_result=}, {fit_result.params=}")
-                        # NOTE: The slope_key is the apparently taken from one of the columns of the df.
-                        #       It's easier to just search for the right one here.
-                        slope_key = [key for key in fit_result.params.keys() if key != "const"][0]
-                        intercept = fit_result.params["const"] if "const" in fit_result.params else 0.0
+                        slope, intercept = _extract_fit_slope_and_intercept(fit_result)
                         distances = _distance_from_line(
                             x=current_df[x_column],
                             y=current_df[y_column],
-                            m=fit_result.params[slope_key],
+                            m=slope,
                             b=intercept,
                         )
                         rms = np.sqrt(np.mean(distances**2))
@@ -435,7 +463,7 @@ def _plot_pairplot_correlations(
                         _x = np.linspace(np.min(current_df[x_column]), np.max(current_df[x_column]), 100)
                         # I'm sure that there's a way to do this directly from statsmodels, but I find their docs to be difficult to read.
                         # Since this is a simple case, we'll just do it by hand
-                        linear_fit = fit_result.params[slope_key] * _x + intercept
+                        linear_fit = slope * _x + intercept
                         current_ax.plot(_x, linear_fit + outliers_config.n_RMS * rms, color='red', linestyle="dashed", linewidth=1.5)
                         current_ax.plot(_x, linear_fit - outliers_config.n_RMS * rms, color='red', linestyle="dashed", linewidth=1.5)
 
@@ -491,6 +519,29 @@ def _distance_from_line(x: npt.NDArray[np.number], y: npt.NDArray[np.number], m:
     :rtype: np.ndarray
     """
     return np.abs(m * x - y + b) / np.sqrt(m**2 + 1)
+
+
+def _extract_fit_slope_and_intercept(fit_result: Any) -> tuple[float, float]:
+    """Extract slope and intercept from a statsmodels fit result.
+
+    Depending on the installed statsmodels / pandas interaction, ``params`` can be
+    either a labeled object with ``keys()`` or a plain numpy array.
+    """
+    params = fit_result.params
+
+    if hasattr(params, "keys"):
+        slope_key = [key for key in params.keys() if key != "const"][0]
+        intercept = params["const"] if "const" in params else 0.0
+        slope = params[slope_key]
+        return float(slope), float(intercept)
+
+    params_array = np.asarray(params, dtype=float).reshape(-1)
+    if params_array.size == 0:
+        msg = "Regression fit returned no parameters."
+        raise ValueError(msg)
+    if params_array.size == 1:
+        return float(params_array[0]), 0.0
+    return float(params_array[1]), float(params_array[0])
 
 
 class PairGridWithRegression(sns.PairGrid):
@@ -705,6 +756,16 @@ def simple_regplot(
     but unfortunately requires the PairGridWithRegression class to actually return those values.
     """
     ax = plt.gca() if ax is None else ax
+
+    x = np.asarray(x)
+    y = np.asarray(y)
+    if x.size == 0 or y.size == 0:
+        logger.info("Skipping regression plot for empty input arrays.")
+        return None
+    if x.size < 2 or y.size < 2:
+        logger.info("Skipping regression plot with fewer than two points.")
+        ax.scatter(x, y)
+        return None
 
     # calculate best-fit line and interval
     x_fit = sm.add_constant(x)

@@ -31,6 +31,8 @@ def plot(config):
     :param EmulationConfig config: we take an instance of EmulationConfig as an argument to keep track of config info.
     '''
     emulation_results = {}
+    observables = data_IO.read_dict_from_h5(config.output_dir, config.observables_filename, verbose=False)
+    has_validation_design_points = len(observables.get("Design_indices_validation", [])) > 0
     for emulation_group_name, emulation_group_config in config.emulation_groups_config.items():
         # Check if emulator already exists
         if not os.path.exists(emulation_group_config.emulation_outputfile):
@@ -58,10 +60,14 @@ def plot(config):
 
         # Emulator plots
         _plot_emulator_observables(results, emulation_group_config, plot_dir, validation_set=False)
-        _plot_emulator_observables(results, emulation_group_config, plot_dir, validation_set=True)
+        if has_validation_design_points:
+            _plot_emulator_observables(results, emulation_group_config, plot_dir, validation_set=True)
+        else:
+            logger.info(f"No validation design points found. Skipping validation emulator plots for group '{emulation_group_name}'.")
 
         _plot_emulator_residuals(results, emulation_group_config, plot_dir, validation_set=False)
-        _plot_emulator_residuals(results, emulation_group_config, plot_dir, validation_set=True)
+        if has_validation_design_points:
+            _plot_emulator_residuals(results, emulation_group_config, plot_dir, validation_set=True)
 
 #---------------------------------------------------------------
 def _plot_pca_explained_variance(results, plot_dir, config):

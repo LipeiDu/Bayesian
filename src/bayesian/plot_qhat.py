@@ -22,6 +22,49 @@ sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize'
 logger = logging.getLogger(__name__)
 
 ####################################################################################################################
+def _normalize_parameter_name(name: str) -> str:
+    """Normalize parameter names so config labels can be matched robustly."""
+    return (
+        name.replace("$", "")
+        .replace("\\", "")
+        .replace("{", "")
+        .replace("}", "")
+        .replace("^", "")
+        .replace("_", "")
+        .replace(" ", "")
+        .lower()
+    )
+
+
+def _alpha_s_parameter_index(config) -> int:
+    """Return the model-parameter index corresponding to the qhat coupling."""
+    parameter_config = config.analysis_config['parameterization'][config.parameterization]
+    names = parameter_config['names']
+
+    configured_name = parameter_config.get("qhat_alpha_s_parameter")
+    candidate_names = [configured_name] if configured_name else []
+    candidate_names.extend([
+        "AlphaS",
+        "alpha_s",
+        "alphaS",
+        "alpha_s_fix",
+        "alphaSfix",
+        r"$\alpha_S^{\rm{fix}}$",
+    ])
+    normalized_candidates = {_normalize_parameter_name(name) for name in candidate_names if name}
+
+    for index, name in enumerate(names):
+        if _normalize_parameter_name(name) in normalized_candidates:
+            return index
+
+    msg = (
+        f"Could not determine the alpha_s parameter for qhat plotting. "
+        f"Checked names={names}. Set 'qhat_alpha_s_parameter' in the parameterization config."
+    )
+    raise ValueError(msg)
+
+
+####################################################################################################################
 def plot(config):
     '''
     Generate qhat plots, using data written to mcmc.h5 file in analysis step.
@@ -315,7 +358,7 @@ def qhat_over_T_cubed(posterior_samples, config, T=0, E=0) -> float:
     if config.parameterization == "exponential":
 
         # Inputs
-        alpha_s_fix = posterior_samples[:,0]
+        alpha_s_fix = posterior_samples[:, _alpha_s_parameter_index(config)]
         # Constants
         active_flavor: Final[int] = 3
         # The JETSCAPE framework calculates qhat using the gluon Casimir factor, but

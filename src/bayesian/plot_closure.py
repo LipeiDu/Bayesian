@@ -39,6 +39,10 @@ def plot(config):
     # For each closure point, plot qhat posterior and compare to true qhat
     # We will make one plot for fixed E, and one plot for fixed T
     n_design_points = config.analysis_config['validation_indices'][1] - config.analysis_config['validation_indices'][0]
+    if n_design_points <= 0:
+        logger.info("No validation design points configured. Skipping closure-test plots.")
+        return
+
     cred_level = 0.9
     E = 100
     T = 0.3

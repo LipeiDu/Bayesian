@@ -1,0 +1,152 @@
+# Configuration for the reduced soft-hard study
+# ------------------------------------------------
+# This setup is intended for a reduced parameter space where:
+#   - hard observable tables keep the usual format
+#   - varying inference parameters are: AlphaS, nucleon_width, normalization
+#   - remaining exponential qhat-model parameters are fixed externally
+#
+# Important:
+#   1. The column order in Design__exponential.dat must match the order in
+#      parameterization.exponential.names below.
+#   2. The min/max bounds must match the reduced JETSCAPE design campaign.
+#   3. Fill in fixed_model_parameters with the actual values used when producing
+#      the reduced tables.
+
+output_dir: "output/reduced_soft_hard_preprocessed_noPCA"
+
+initialize_observables: True
+preprocess_input_data: True
+fit_emulators: True
+run_mcmc: True
+run_closure_tests: True
+
+plot:
+  input_data: True
+  emulators: True
+  mcmc: True
+  qhat: True
+  closure_tests: False
+  across_analyses: False
+
+debug_level: 0
+
+# ------------------------------------------------
+# Current local reduced-study table campaign.
+# The design and prediction tables are expected to scan:
+#   (AlphaS, nucleon_width, normalization)
+observable_table_dir: "20260401/tables"
+observable_config_dir: "../jetscape-analysis/config"
+
+# Use preprocessed inputs only if you explicitly run preprocessing first.
+observables_filename: "observables.h5"
+
+skip_standard_analyses: False
+skip_inference_workflows: True
+inference_workflows: {}
+
+parameters:
+  preprocessing_parameters: &default_preprocessing_parameters
+    smoothing:
+      outlier_n_RMS: 2.0
+      interpolation_method: "linear"
+      max_n_feature_outliers_to_interpolate: 2
+
+  emulator_parameters: &default_emulator_parameters
+    force_retrain: False
+
+    kernels:
+      active: ["matern", "noise"]
+
+      matern:
+        nu: 1.5
+        length_scale_bounds_factor: [0.01, 100]
+
+      rbf:
+        length_scale_bounds_factor: [0.01, 100]
+
+      constant:
+        constant_value: 1.0
+        constant_value_bounds: [0.001, 10]
+
+      noise:
+        type: "white"
+        args:
+          noise_level: 0.25
+          noise_level_bounds: [0.0001, 1]
+
+    GPR:
+      n_restarts: 50
+      alpha: 1.0e-10
+
+    cross_validation: False
+    cross_validation_k: 5
+    independent_validation: True
+
+  mcmc_parameters: &default_mcmc_parameters
+    n_walkers: 100
+    n_burn_steps: 1000
+    n_sampling_steps: 5000
+    n_logging_steps: 10
+
+  closure: &default_closure_parameters
+    confidence: 0.9
+
+analysis_base: &reduced_model_base
+  model_name: "MATTER+LBT"
+  parameterizations: ["exponential"]
+  sqrts_list: [200, 2760, 5020]
+  centrality_range: [0, 10]
+  recoil_scheme: "negative_recominber"
+  parameterization:
+    exponential:
+      # This order must match the reduced Design__exponential.dat columns.
+      names: ["AlphaS", "nucleon_width", "normalization"]
+      min: [0.1, 0.5, 10.0]
+      max: [0.5, 1.5, 20.0]
+      # qhat plotting should use this parameter by name rather than by position.
+      qhat_alpha_s_parameter: "AlphaS"
+      # Fill with the actual values used when producing the reduced hard-sector tables.
+      fixed_model_parameters:
+        Q0: 1.652620
+        C1: -4.510520
+        C2: -1.311680
+        Tau0: 0.325466
+        C3: 3.673320
+  alpha: 0.2
+  # No design points excluded in this reduced study.
+  design_points_to_exclude: [0, 2, 3]
+  # No closure tests planned for now.
+  validation_indices: [0, 0]
+
+analyses:
+  reduced_soft_hard:
+    parameters:
+      preprocessing:
+        <<: *default_preprocessing_parameters
+      emulators:
+        hadron_group:
+          <<: *default_emulator_parameters
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+            - 'hadron__pt_'
+        jet_group:
+          <<: *default_emulator_parameters
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+            - "jet__pt_"
+          observable_exclude_list:
+            - "pt_y_atlas"
+            - "2760__PbPb__inclusive_chjet__pt_alice"
+
+      mcmc:
+        <<: *default_mcmc_parameters
+      closure:
+        <<: *default_closure_parameters
+
+    <<: *reduced_model_base
+    cuts:
+      "chjet__pt_star__R0.2": [14, 100]
+      "chjet__pt_star__R0.4": [16, 100]
+    plot_panel_shapes: [[3, 3], [3, 3], [3, 3], [3, 3], [3, 3]]
