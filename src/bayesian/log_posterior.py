@@ -18,6 +18,7 @@ from scipy.stats import norm
 from bayesian.emulation import base
 from bayesian import prior as prior_module
 from bayesian.model_discrepancy import add_discrepancy_covariance_all_groups
+from bayesian.parameterization import ParameterizationInfo
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,12 @@ g_param_names: dict[str, list[int]] = {}
 g_model_param_indices: list[int] = []
 g_discrepancy_param_indices: dict[str, list[int]] = {}
 g_discrepancy_enabled: bool
+g_full_model_param_names: list[str] = []
+g_fixed_model_parameters: dict[str, float] = {}
 
 def initialize_pool_variables(local_min, local_max, local_emulation_config, local_emulation_results,local_experimental_results, local_emulator_cov_unexplained,
-    local_prior_config, local_discrepancy_config, local_observable_xcoords, param_names, local_discrepancy_enabled
+    local_prior_config, local_discrepancy_config, local_observable_xcoords, param_names, local_discrepancy_enabled,
+    local_full_model_param_names, local_fixed_model_parameters
 ) -> None:
     global g_min  # noqa: PLW0603
     global g_max  # noqa: PLW0603
@@ -51,6 +55,7 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     global g_discrepancy_config, g_observable_xcoords, g_param_names
     global g_model_param_indices, g_discrepancy_param_indices
     global g_discrepancy_enabled
+    global g_full_model_param_names, g_fixed_model_parameters
 
     g_min = local_min
     g_max = local_max
@@ -63,6 +68,8 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     g_observable_xcoords = local_observable_xcoords
     g_param_names = param_names
     g_discrepancy_enabled = local_discrepancy_enabled
+    g_full_model_param_names = local_full_model_param_names
+    g_fixed_model_parameters = local_fixed_model_parameters
 
     # Identify prefixes used for discrepancy parameters
     # Discrepancy parameters are named with prefix: {group}__{param}
@@ -136,7 +143,17 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
 
         # LDU: The discrepancy parameters are irrelavant to emulation
         # X[inside][:, g_model_param_indices] ensures emulators only see the model parameters, excluding discrepancy parameters
-        emulator_predictions = base.predict(X[inside][:, g_model_param_indices], g_emulation_config,
+        sampled_model_parameters = X[inside][:, g_model_param_indices]
+        full_model_parameters = ParameterizationInfo(
+            full_names=g_full_model_param_names,
+            full_min=[],
+            full_max=[],
+            fixed_parameters=g_fixed_model_parameters,
+        ).expand_sampled_to_full(
+            sampled_model_parameters,
+            sampled_names=[g_param_names[i] for i in g_model_param_indices],
+        )
+        emulator_predictions = base.predict(full_model_parameters, g_emulation_config,
                                                  emulation_group_results=g_emulation_results,
                                                  emulator_cov_unexplained=g_emulator_cov_unexplained)
 

@@ -27,6 +27,7 @@ import yaml
 from bayesian import common_base, data_IO, log_posterior
 from bayesian.emulation import base
 from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group
+from bayesian.parameterization import parameterization_info
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +44,14 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
     '''
 
     # Get parameter names and min/max
-    names = config.analysis_config['parameterization'][config.parameterization]['names']
-    parameter_min = config.analysis_config['parameterization'][config.parameterization]['min']
-    parameter_max = config.analysis_config['parameterization'][config.parameterization]['max']
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    names = parameter_info.sampled_names
+    parameter_min = parameter_info.sampled_min
+    parameter_max = parameter_info.sampled_max
 
     # Load prior config if present (model parameters only)
     model_prior_config = config.analysis_config["parameterization"][config.parameterization].get("prior", None)
+    model_prior_config = parameter_info.filter_prior_config(model_prior_config)
 
     # Gather discrepancy settings per observable group
     # Extend parameter lists with discrepancy hyperparameters: all model + discrepancy parameters
@@ -203,6 +206,8 @@ def _run_using_emcee(
         parameter_ndim: Number of dimensions of the parameters.
         closure_index: Index of the closure test design point. If negative, no closure test is performed.
     """
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+
     # TODO: By default the chain will be stored in memory as a numpy array
     #       If needed we can create a h5py dataset for compression/chunking
 
@@ -221,7 +226,8 @@ def _run_using_emcee(
         initargs=[
             parameter_min, parameter_max, emulation_config, emulation_results,
             experimental_results, emulator_cov_unexplained, prior_config,
-            discrepancy_config, observable_xcoords, names, discrepancy_enabled_groups
+            discrepancy_config, observable_xcoords, names, discrepancy_enabled_groups,
+            parameter_info.full_names, parameter_info.fixed_parameters,
         ]) as pool:
 
         # Construct sampler (we create a dummy daughter class from emcee.EnsembleSampler, to add some logging info)
@@ -270,7 +276,7 @@ def _run_using_emcee(
         # Write to file
         logger.info('Writing chain to file...')
         output_dict = {}
-        output_dict['parameter_names'] = np.array(names, dtype='S') # model + discrepancy hyper (if enabled) parameters
+        output_dict['parameter_names'] = np.array(names, dtype='S') # sampled model + discrepancy hyper (if enabled) parameters
         output_dict['chain'] = sampler.get_chain()
         output_dict['acceptance_fraction'] = sampler.acceptance_fraction
         output_dict['log_prob'] = sampler.get_log_prob()
@@ -304,7 +310,7 @@ def _run_using_emcee(
         posterior_dict = {
             "posterior_samples": posterior_samples,
             "log_prob": sampler.get_log_prob(flat=True),
-            "parameter_names": np.array(config.analysis_config['parameterization'][config.parameterization]['names'], dtype='S'),
+            "parameter_names": np.array(names, dtype='S'),
         }
         data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
 
@@ -401,10 +407,12 @@ def _run_using_pocoMC(
     #       to repeated call this function. (`set_context` can only be called once - otherwise, it's a runtime error).
     # NOTE: I create the pool here rather than using the built-in one because I need to initialize the log_posterior!
     ctx = multiprocessing.get_context('spawn')
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
     with ctx.Pool(
         initializer=log_posterior.initialize_pool_variables,
         initargs=[
-            parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained, prior_config
+            parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained,
+            prior_config, {}, {}, parameter_info.sampled_names, [], parameter_info.full_names, parameter_info.fixed_parameters
         ]) as pool:
         logging.info('Starting pocoMC ...')
         sampler = pmc.Sampler(
@@ -451,12 +459,13 @@ def _run_using_pocoMC(
 
     # Save lightweight posterior samples
     logger.info('Writing posterior samples to posterior.h5...')
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
     posterior_dict = {
         "posterior_samples": samples,
         "weights": weights,
         "logl": logl,
         "logp": logp,
-        "parameter_names": np.array(config.analysis_config['parameterization'][config.parameterization]['names'], dtype='S'),
+        "parameter_names": np.array(parameter_info.sampled_names, dtype='S'),
     }
     data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
 

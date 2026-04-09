@@ -16,6 +16,7 @@ import pandas as pd
 
 from bayesian import data_IO, mcmc, plot_utils
 from bayesian.emulation import base
+from bayesian.parameterization import parameterization_info
 
 sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize':18})
 
@@ -39,7 +40,7 @@ def _normalize_parameter_name(name: str) -> str:
 def _alpha_s_parameter_index(config) -> int:
     """Return the model-parameter index corresponding to the qhat coupling."""
     parameter_config = config.analysis_config['parameterization'][config.parameterization]
-    names = parameter_config['names']
+    names = parameterization_info(config.analysis_config, config.parameterization).full_names
 
     configured_name = parameter_config.get("qhat_alpha_s_parameter")
     candidate_names = [configured_name] if configured_name else []
@@ -83,10 +84,12 @@ def plot(config):
     n_walkers, n_steps, n_params = results['chain'].shape
     posterior = results['chain'].reshape((n_walkers*n_steps, n_params))
     parameter_names = results['parameter_names'].astype(str).tolist()
-    model_param_names = config.analysis_config['parameterization'][config.parameterization]['names']
-
     posterior_df = pd.DataFrame(posterior, columns=parameter_names)
-    model_samples = posterior_df[model_param_names].to_numpy()
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    model_samples = parameter_info.expand_sampled_to_full(
+        posterior_df[parameter_info.sampled_names].to_numpy(),
+        sampled_names=parameter_info.sampled_names,
+    )
 
     # Plot output dir
     plot_dir = Path(config.output_dir) / 'plot_qhat'
@@ -271,6 +274,14 @@ def _plot_single_parameter_observable_sensitivity(map_parameters, i_parameter, p
     x_prime[i_parameter] = (1+delta)*x_prime[i_parameter]
     x = np.expand_dims(x, axis=0)
     x_prime = np.expand_dims(x_prime, axis=0)
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    parameter_names_for_plot = (
+        parameter_info.full_names
+        if x.shape[1] == len(parameter_info.full_names)
+        else parameter_info.sampled_names
+    )
+    x = parameter_info.expand_sampled_to_full(x, sampled_names=parameter_names_for_plot)
+    x_prime = parameter_info.expand_sampled_to_full(x_prime, sampled_names=parameter_names_for_plot)
 
     # Get emulator predictions at the two points
     emulation_config = base.EmulatorOrganizationConfig.from_config_file(
@@ -303,7 +314,8 @@ def _plot_single_parameter_observable_sensitivity(map_parameters, i_parameter, p
     columns = [0]
     labels = [rf'Sensitivity index at MAP, $\delta={delta}$']
     colors = [sns.xkcd_rgb['dark sky blue']]
-    param = config.analysis_config['parameterization'][config.parameterization]['names'][i_parameter][1:-1].replace('{', '{{').replace('}', '}}')
+    param_label = parameter_names_for_plot[i_parameter]
+    param = param_label[1:-1].replace('{', '{{').replace('}', '}}') if param_label.startswith("$") else param_label
     ylabel = rf'$S({param}, \mathcal{{O}}, \delta)$'
     #ylabel = rf'$S({param}, \mathcal{{O}}, \delta) = \frac{{1}}{{\delta}} \frac{{\mathcal{{O}}([1+\delta] {param})-\mathcal{{O}}({param})}}{{\mathcal{{O}}({param})}}$'
     filename = f'sensitivity_index_{i_parameter}.pdf'
@@ -395,9 +407,10 @@ def _generate_prior_samples(config, n_samples=100):
     :param 2darray parameters: posterior samples of parameters -- shape (n_samples, n_params)
     :return 2darray: samples -- shape (n_samples,n_params)
     '''
-    names = config.analysis_config['parameterization'][config.parameterization]['names']
-    parameter_min = config.analysis_config['parameterization'][config.parameterization]['min'].copy()
-    parameter_max = config.analysis_config['parameterization'][config.parameterization]['max'].copy()
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    names = parameter_info.sampled_names
+    parameter_min = parameter_info.sampled_min.copy()
+    parameter_max = parameter_info.sampled_max.copy()
 
     # Transform c1,c2,c3 to log
     n_params = len(names)

@@ -23,6 +23,7 @@ from bayesian import data_IO
 from bayesian import plot_utils
 from bayesian.emulation import base
 from bayesian import mcmc
+from bayesian.parameterization import parameterization_info
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,8 @@ def plot(config: mcmc.MCMCConfig):
         logger.warning("parameter_names not found in MCMC file. Falling back to config-defined names.")
 
     # Only model parameters
-    model_param_names = config.analysis_config['parameterization'][config.parameterization]['names']
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    model_param_names = parameter_info.full_names
 
     # Check that results match config file
     chain = results['chain']
@@ -360,9 +362,13 @@ def _plot_posterior_observables(chain, plot_dir, config, n_samples=200, paramete
     idx = np.random.choice(posterior.shape[0], size=n_samples, replace=False)
 
     # extract model parameters only before prediction
-    model_param_names = config.analysis_config['parameterization'][config.parameterization]['names']
+    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    model_param_names = parameter_info.full_names
     df_posterior = pd.DataFrame(posterior[idx, :], columns=parameter_names)
-    posterior_samples = df_posterior[model_param_names].to_numpy()
+    posterior_samples = parameter_info.expand_sampled_to_full(
+        df_posterior[parameter_info.sampled_names].to_numpy(),
+        sampled_names=parameter_info.sampled_names,
+    )
 
     # Get emulator predictions at these points
     observables = data_IO.read_dict_from_h5(config.input_analysis_dir, config.observables_filename, verbose=False)
