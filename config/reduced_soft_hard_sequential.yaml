@@ -1,30 +1,31 @@
-# Configuration for the reduced soft-hard study
-# ------------------------------------------------
-# This setup is intended for a reduced parameter space where:
-#   - hard observable tables keep the usual format
-#   - varying inference parameters are: AlphaS, nucleon_width, normalization
-#   - remaining exponential qhat-model parameters are fixed externally
+# Configuration for the reduced soft-hard sequential study
+# --------------------------------------------------------
+# This run uses the same reduced hard-sector emulator and observables as the
+# reduced_soft_hard study, but replaces the soft prior on
+#   (nucleon_width, normalization)
+# with the projected soft-sector posterior density model.
 #
-# Important:
-#   1. The column order in Design__exponential.dat must match the order in
-#      parameterization.exponential.names below.
-#   2. The min/max bounds must match the reduced JETSCAPE design campaign.
-#   3. Fill in fixed_model_parameters with the actual values used when producing
-#      the reduced tables.
+# The resulting target is
+#   log L_hard(AlphaS, nucleon_width, normalization)
+# + log p_soft(nucleon_width, normalization)
+# + log pi_alpha(AlphaS)
+#
+# This file is kept separate from reduced_soft_hard.yaml so the original
+# hard-only reduced setup remains unchanged for comparison.
 
-output_dir: "output/reduced_soft_hard_preprocessed_noPCA"
+output_dir: "output/reduced_soft_hard_sequential_preprocessed_noPCA"
 
-initialize_observables: False
-preprocess_input_data: False
-fit_emulators: False
+initialize_observables: True
+preprocess_input_data: True
+fit_emulators: True
 run_mcmc: True
 run_closure_tests: False
 
 plot:
-  input_data: False
-  emulators: False
-  mcmc: False
-  qhat: False
+  input_data: True
+  emulators: True
+  mcmc: True
+  qhat: True
   closure_tests: False
   across_analyses: False
 
@@ -37,7 +38,6 @@ debug_level: 0
 observable_table_dir: "../STAT-outputs/20260401/tables"
 observable_config_dir: "../jetscape-analysis/config"
 
-# Use preprocessed inputs only if you explicitly run preprocessing first.
 observables_filename: "observables.h5"
 
 skip_standard_analyses: False
@@ -87,13 +87,11 @@ parameters:
     n_burn_steps: 1000
     n_sampling_steps: 5000
     n_logging_steps: 10
-    export_hard_likelihood_samples: True
+    # Sequential runs are posterior runs, not hard-likelihood proposal exports.
+    export_hard_likelihood_samples: False
     hard_likelihood_outputfilename: "hard_likelihood_samples.csv"
     sequential_inference:
-      enabled: False
-      # When enabled, the Bayesian code replaces the soft prior on
-      # (nucleon_width, normalization) with the learned soft posterior density.
-      # The path may be absolute or relative to this config file.
+      enabled: True
       soft_density_model_file: "/Users/Lipei/Documents/Research/heavy-ion-research/projects/STAT_soft_hard/sequential_inference/results/soft_density_kde_2d/kde_soft_posterior_2d.pkl"
       soft_density_model_type: "gaussian_kde"
       soft_parameter_names: ["nucleon_width", "normalization"]
@@ -110,13 +108,10 @@ analysis_base: &reduced_model_base
   recoil_scheme: "negative_recominber"
   parameterization:
     exponential:
-      # This order must match the reduced Design__exponential.dat columns.
       names: ["AlphaS", "nucleon_width", "normalization"]
       min: [0.1, 0.5, 10.0]
       max: [0.5, 1.5, 20.0]
-      # qhat plotting should use this parameter by name rather than by position.
       qhat_alpha_s_parameter: "AlphaS"
-      # Fill with the actual values used when producing the reduced hard-sector tables.
       fixed_model_parameters:
         Q0: 1.652620
         C1: -4.510520
@@ -124,9 +119,7 @@ analysis_base: &reduced_model_base
         Tau0: 0.325466
         C3: 3.673320
   alpha: 0.2
-  # No design points excluded in this reduced study.
   design_points_to_exclude: [0, 2, 3]
-  # No closure tests planned for now.
   validation_indices: [0, 0]
 
 analyses:
@@ -140,7 +133,7 @@ analyses:
           emulator_name: sk_learn
           n_pc: null
           observable_list:
-            - 'hadron__pt_'
+            - "hadron__pt_"
         jet_group:
           <<: *default_emulator_parameters
           emulator_name: sk_learn

@@ -13,12 +13,12 @@ import logging
 import numpy as np
 import numpy.typing as npt
 from scipy.linalg import lapack
-from scipy.stats import norm
 
 from bayesian.emulation import base
 from bayesian import prior as prior_module
 from bayesian.model_discrepancy import add_discrepancy_covariance_all_groups
 from bayesian.parameterization import ParameterizationInfo
+from bayesian import sequential_prior
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +39,12 @@ g_discrepancy_param_indices: dict[str, list[int]] = {}
 g_discrepancy_enabled: bool
 g_full_model_param_names: list[str] = []
 g_fixed_model_parameters: dict[str, float] = {}
+g_sequential_inference_config: dict | None = None
+g_sequential_log_prior_fn = None
 
 def initialize_pool_variables(local_min, local_max, local_emulation_config, local_emulation_results,local_experimental_results, local_emulator_cov_unexplained,
     local_prior_config, local_discrepancy_config, local_observable_xcoords, param_names, local_discrepancy_enabled,
-    local_full_model_param_names, local_fixed_model_parameters
+    local_full_model_param_names, local_fixed_model_parameters, local_sequential_inference_config=None
 ) -> None:
     global g_min  # noqa: PLW0603
     global g_max  # noqa: PLW0603
@@ -56,6 +58,7 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     global g_model_param_indices, g_discrepancy_param_indices
     global g_discrepancy_enabled
     global g_full_model_param_names, g_fixed_model_parameters
+    global g_sequential_inference_config, g_sequential_log_prior_fn
 
     g_min = local_min
     g_max = local_max
@@ -70,6 +73,7 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     g_discrepancy_enabled = local_discrepancy_enabled
     g_full_model_param_names = local_full_model_param_names
     g_fixed_model_parameters = local_fixed_model_parameters
+    g_sequential_inference_config = local_sequential_inference_config
 
     # Identify prefixes used for discrepancy parameters
     # Discrepancy parameters are named with prefix: {group}__{param}
@@ -97,6 +101,11 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
 
     # Build the prior function
     g_log_prior_fn = prior_module.make_log_prior_fn(g_prior_config, g_param_names)
+    g_sequential_log_prior_fn = sequential_prior.build_sequential_log_prior_fn(
+        sequential_config=g_sequential_inference_config,
+        combined_prior_config=g_prior_config,
+        sampled_parameter_names=g_param_names,
+    )
 
 #---------------------------------------------------------------
 def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDArray[np.float64]:
@@ -199,8 +208,9 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
         # (since above we set the log-posterior to -inf for samples outside the parameter bounds)
         log_posterior[inside] += list(map(_loglikelihood, dY, covariance_matrix))
 
-        # Add log prior term to support non-uniform priors; LDU Apr 21, 2025
-        log_posterior[inside] += g_log_prior_fn(X[inside])
+        # Add prior term. In sequential mode this replaces the soft prior subspace with the learned soft posterior.
+        active_log_prior_fn = g_sequential_log_prior_fn if g_sequential_log_prior_fn is not None else g_log_prior_fn
+        log_posterior[inside] += active_log_prior_fn(X[inside])
 
         # NOTE-STAT: We don't support the extra_std term here.
 

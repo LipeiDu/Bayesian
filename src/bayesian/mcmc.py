@@ -28,6 +28,7 @@ from bayesian import common_base, data_IO, log_posterior
 from bayesian.emulation import base
 from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group
 from bayesian.parameterization import parameterization_info
+from bayesian.sequential_export import export_hard_likelihood_samples
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,7 @@ def _run_using_emcee(
             experimental_results, emulator_cov_unexplained, prior_config,
             discrepancy_config, observable_xcoords, names, discrepancy_enabled_groups,
             parameter_info.full_names, parameter_info.fixed_parameters,
+            config.sequential_inference_config,
         ]) as pool:
 
         # Construct sampler (we create a dummy daughter class from emcee.EnsembleSampler, to add some logging info)
@@ -313,6 +315,17 @@ def _run_using_emcee(
             "parameter_names": np.array(names, dtype='S'),
         }
         data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
+
+        if closure_index < 0:
+            export_hard_likelihood_samples(
+                config=config,
+                parameter_info=parameter_info,
+                sampled_parameter_names=list(names),
+                posterior_samples=posterior_samples,
+                log_posterior_values=sampler.get_log_prob(flat=True),
+                model_prior_config=config.analysis_config["parameterization"][config.parameterization].get("prior", None),
+                combined_prior_config=prior_config,
+            )
 
         # Save the sampler to file as well, in case we want to access it later
         #   e.g. sampler.get_chain(discard=n_burn_steps, thin=thin, flat=True)
@@ -412,7 +425,8 @@ def _run_using_pocoMC(
         initializer=log_posterior.initialize_pool_variables,
         initargs=[
             parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained,
-            prior_config, {}, {}, parameter_info.sampled_names, [], parameter_info.full_names, parameter_info.fixed_parameters
+            prior_config, {}, {}, parameter_info.sampled_names, [], parameter_info.full_names, parameter_info.fixed_parameters,
+            config.sequential_inference_config,
         ]) as pool:
         logging.info('Starting pocoMC ...')
         sampler = pmc.Sampler(
@@ -469,9 +483,23 @@ def _run_using_pocoMC(
     }
     data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
 
+    if closure_index < 0:
+        export_hard_likelihood_samples(
+            config=config,
+            parameter_info=parameter_info,
+            sampled_parameter_names=list(parameter_info.sampled_names),
+            posterior_samples=samples,
+            log_posterior_values=logl + logp,
+            model_prior_config=config.analysis_config["parameterization"][config.parameterization].get("prior", None),
+            combined_prior_config=prior_config,
+            sample_weights=weights,
+        )
+
     logging.info('Writing pocoMC chains to file...')
+    logz_value = output_dict.get("logZ")
+    logz_err_value = output_dict.get("logZ_err")
     chain_data = {'chain': samples, 'weights': weights, 'logl': logl,
-                    'logp': logp, 'logz': logz, 'logz_err': logz_err}
+                    'logp': logp, 'logz': logz_value, 'logz_err': logz_err_value}
     with config.mcmc_outputfile.open('wb') as file:
         pickle.dump(chain_data, file)
 
@@ -598,6 +626,12 @@ class MCMCConfig(common_base.CommonBase):
 
         self.compute_evidence = mcmc_configuration.get("compute_evidence", False)
         self.evidence_method = mcmc_configuration.get("evidence_method", "harmonic_mean")
+        self.export_hard_likelihood_samples = mcmc_configuration.get("export_hard_likelihood_samples", False)
+        self.hard_likelihood_outputfilename = mcmc_configuration.get(
+            "hard_likelihood_outputfilename",
+            "hard_likelihood_samples.csv",
+        )
+        self.sequential_inference_config = self._resolve_sequential_inference_config(mcmc_configuration)
 
         # Set input/output paths
         if output_dir is not None:
@@ -633,3 +667,25 @@ class MCMCConfig(common_base.CommonBase):
         # Update formatting of parameter names for plotting
         unformatted_names = self.analysis_config['parameterization'][self.parameterization]['names']
         self.analysis_config['parameterization'][self.parameterization]['names'] = [rf'{s}' for s in unformatted_names]
+
+    def _resolve_sequential_inference_config(self, mcmc_configuration: dict) -> dict | None:
+        sequential_config = dict(mcmc_configuration.get("sequential_inference", {}) or {})
+        if not sequential_config.get("enabled", False):
+            return None
+
+        if "soft_density_model_file" not in sequential_config:
+            raise ValueError(
+                "Sequential inference is enabled, but no 'soft_density_model_file' was provided in the MCMC config."
+            )
+
+        model_path = Path(sequential_config["soft_density_model_file"])
+        if not model_path.is_absolute():
+            model_path = (self.config_file.parent / model_path).resolve()
+        sequential_config["soft_density_model_file"] = str(model_path)
+        sequential_config.setdefault("soft_density_model_type", "gaussian_kde")
+        sequential_config.setdefault("soft_parameter_names", ["nucleon_width", "normalization"])
+        sequential_config.setdefault(
+            "alpha_parameter_name",
+            self.analysis_config["parameterization"][self.parameterization].get("qhat_alpha_s_parameter", "AlphaS"),
+        )
+        return sequential_config
