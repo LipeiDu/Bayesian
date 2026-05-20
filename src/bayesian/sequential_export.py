@@ -12,6 +12,7 @@ import numpy.typing as npt
 
 from bayesian import prior as prior_module
 from bayesian.parameterization import ParameterizationInfo
+from bayesian.sequential_inference import SequentialInferenceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,10 @@ def export_hard_likelihood_samples(
 
     name_to_full_index = {name: i for i, name in enumerate(parameter_info.full_names)}
     alpha_values = full_model_points[:, name_to_full_index[alpha_name]]
-    nucleon_width_values = full_model_points[:, name_to_full_index["nucleon_width"]]
-    normalization_values = full_model_points[:, name_to_full_index["normalization"]]
+    soft_parameter_values = {
+        name: full_model_points[:, name_to_full_index[name]]
+        for name in soft_names
+    }
 
     log_prior_soft_base = _evaluate_component_log_prior(
         full_model_points=full_model_points,
@@ -116,8 +119,6 @@ def export_hard_likelihood_samples(
             row = {
                 "sample_id": str(i),
                 alpha_name: _format_float(alpha_values[i]),
-                soft_names[0]: _format_float(nucleon_width_values[i]),
-                soft_names[1]: _format_float(normalization_values[i]),
                 "log_likelihood_hard": _format_float(log_likelihood_hard[i]),
                 "log_prior_soft_base": _format_float(log_prior_soft_base[i]),
                 "log_prior_alpha": _format_float(log_prior_alpha[i]),
@@ -126,6 +127,8 @@ def export_hard_likelihood_samples(
                 "run_id": config.mcmc_output_dir.name,
                 "config_path": str(config.config_file.resolve()),
             }
+            for name in soft_names:
+                row[name] = _format_float(soft_parameter_values[name][i])
             if sample_weights is not None:
                 row["sample_weight"] = _format_float(sample_weights[i])
             writer.writerow(row)
@@ -160,6 +163,10 @@ def export_hard_likelihood_samples(
 
 
 def _resolve_alpha_name(config, parameter_info: ParameterizationInfo) -> str:
+    sequential_config = getattr(config, "sequential_inference_config", None)
+    if isinstance(sequential_config, SequentialInferenceConfig):
+        return sequential_config.alpha_parameter_name
+
     configured_name = config.analysis_config["parameterization"][config.parameterization].get(
         "qhat_alpha_s_parameter",
         None,
@@ -176,17 +183,15 @@ def _resolve_alpha_name(config, parameter_info: ParameterizationInfo) -> str:
 
 
 def _resolve_soft_parameter_names(config, parameter_info: ParameterizationInfo) -> list[str]:
-    sequential_config = getattr(config, "sequential_inference_config", None) or {}
-    soft_names = list(sequential_config.get("soft_parameter_names", ["nucleon_width", "normalization"]))
+    sequential_config = getattr(config, "sequential_inference_config", None)
+    if isinstance(sequential_config, SequentialInferenceConfig):
+        soft_names = list(sequential_config.soft_parameter_names)
+    else:
+        soft_names = ["nucleon_width", "normalization"]
     missing = [name for name in soft_names if name not in parameter_info.full_names]
     if missing:
         raise ValueError(
             f"Configured soft parameter names {soft_names} are not all present in the parameterization. Missing: {missing}"
-        )
-    if len(soft_names) != 2:
-        raise ValueError(
-            "Hard-likelihood export currently expects exactly two soft parameters in the reduced study. "
-            f"Received: {soft_names}"
         )
     return soft_names
 
@@ -207,9 +212,8 @@ def _build_prior_ranges(
         )
     }
     return {
-        alpha_name: name_to_bounds[alpha_name],
-        soft_names[0]: name_to_bounds[soft_names[0]],
-        soft_names[1]: name_to_bounds[soft_names[1]],
+        name: name_to_bounds[name]
+        for name in [alpha_name, *soft_names]
     }
 
 

@@ -3,11 +3,8 @@ import logging
 import h5py
 from pathlib import Path
 from typing import Callable
-from scipy.stats import norm, gaussian_kde
+from scipy.stats import norm, gaussian_kde, multivariate_normal
 import numpy.typing as npt
-import matplotlib.pyplot as plt
-import seaborn as sns
-import itertools
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +151,10 @@ def verify_prior_vs_posterior(
     """
     Compare posterior samples with loaded prior as corner-style heatmap + contour plot.
     """
+    import itertools
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
     logger.info(f"Verifying prior vs posterior: {posterior_file}")
 
     # Load posterior samples
@@ -235,4 +236,3 @@ def verify_prior_vs_posterior(
         plt.show()
 
     plt.close(fig)
-

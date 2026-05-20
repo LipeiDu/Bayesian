@@ -19,6 +19,7 @@ from bayesian import prior as prior_module
 from bayesian.model_discrepancy import add_discrepancy_covariance_all_groups
 from bayesian.parameterization import ParameterizationInfo
 from bayesian import sequential_prior
+from bayesian.sequential_inference import SequentialInferenceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ g_discrepancy_param_indices: dict[str, list[int]] = {}
 g_discrepancy_enabled: bool
 g_full_model_param_names: list[str] = []
 g_fixed_model_parameters: dict[str, float] = {}
-g_sequential_inference_config: dict | None = None
+g_sequential_inference_config: SequentialInferenceConfig | None = None
 g_sequential_log_prior_fn = None
 
 def initialize_pool_variables(local_min, local_max, local_emulation_config, local_emulation_results,local_experimental_results, local_emulator_cov_unexplained,
@@ -105,6 +106,8 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
         sequential_config=g_sequential_inference_config,
         combined_prior_config=g_prior_config,
         sampled_parameter_names=g_param_names,
+        sampled_parameter_min=g_min,
+        sampled_parameter_max=g_max,
     )
 
 #---------------------------------------------------------------

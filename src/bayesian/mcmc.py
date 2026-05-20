@@ -29,6 +29,7 @@ from bayesian.emulation import base
 from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group
 from bayesian.parameterization import parameterization_info
 from bayesian.sequential_export import export_hard_likelihood_samples
+from bayesian.sequential_inference import resolve_sequential_inference_config
 
 logger = logging.getLogger(__name__)
 
@@ -242,11 +243,16 @@ def _run_using_emcee(
 
         # Generate random starting positions for each walker
         rng = np.random.default_rng()
-        if log_posterior.g_log_prior_fn is not None and hasattr(log_posterior.g_log_prior_fn, "sample"):
+        active_start_prior = (
+            log_posterior.g_sequential_log_prior_fn
+            if log_posterior.g_sequential_log_prior_fn is not None
+            else log_posterior.g_log_prior_fn
+        )
+        if active_start_prior is not None and hasattr(active_start_prior, "sample"):
             # Sample starting points for the MCMC walkers from the non-trivial priors
             # speed up burn-in, make chains more accurate, and avoid "stuck walkers" when using nontrivial priors in multistep inference
-            logger.info('Sampling initial walker positions from prior...')
-            random_pos = log_posterior.g_log_prior_fn.sample(size=config.n_walkers)
+            logger.info('Sampling initial walker positions from active prior...')
+            random_pos = active_start_prior.sample(size=config.n_walkers)
         else:
             logger.info('Sampling initial walker positions uniformly between bounds...')
             random_pos = rng.uniform(parameter_min, parameter_max, (config.n_walkers, parameter_ndim))
@@ -304,6 +310,8 @@ def _run_using_emcee(
             design_point =  data_IO.design_array_from_h5(config.input_analysis_dir, filename='observables.h5', validation_set=True)[closure_index]
             output_dict['design_point'] = design_point
             output_dict['experimental_pseudodata'] = experimental_results
+        if config.sequential_inference_config is not None:
+            output_dict['sequential_inference'] = config.sequential_inference_config.to_dict()
         output_dict['parameter_names'] = np.array(names, dtype='S')
         data_IO.write_dict_to_h5(output_dict, config.mcmc_output_dir, 'mcmc.h5', verbose=True)
 
@@ -314,6 +322,8 @@ def _run_using_emcee(
             "log_prob": sampler.get_log_prob(flat=True),
             "parameter_names": np.array(names, dtype='S'),
         }
+        if config.sequential_inference_config is not None:
+            posterior_dict["sequential_inference"] = config.sequential_inference_config.to_dict()
         data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
 
         if closure_index < 0:
@@ -455,6 +465,8 @@ def _run_using_pocoMC(
         'logl': logl,
         'logp': logp,
     }
+    if config.sequential_inference_config is not None:
+        output_dict['sequential_inference'] = config.sequential_inference_config.to_dict()
 
     if config.compute_evidence:
         import bayesian.evidence as evidence
@@ -481,6 +493,8 @@ def _run_using_pocoMC(
         "logp": logp,
         "parameter_names": np.array(parameter_info.sampled_names, dtype='S'),
     }
+    if config.sequential_inference_config is not None:
+        posterior_dict["sequential_inference"] = config.sequential_inference_config.to_dict()
     data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
 
     if closure_index < 0:
@@ -668,24 +682,10 @@ class MCMCConfig(common_base.CommonBase):
         unformatted_names = self.analysis_config['parameterization'][self.parameterization]['names']
         self.analysis_config['parameterization'][self.parameterization]['names'] = [rf'{s}' for s in unformatted_names]
 
-    def _resolve_sequential_inference_config(self, mcmc_configuration: dict) -> dict | None:
-        sequential_config = dict(mcmc_configuration.get("sequential_inference", {}) or {})
-        if not sequential_config.get("enabled", False):
-            return None
-
-        if "soft_density_model_file" not in sequential_config:
-            raise ValueError(
-                "Sequential inference is enabled, but no 'soft_density_model_file' was provided in the MCMC config."
-            )
-
-        model_path = Path(sequential_config["soft_density_model_file"])
-        if not model_path.is_absolute():
-            model_path = (self.config_file.parent / model_path).resolve()
-        sequential_config["soft_density_model_file"] = str(model_path)
-        sequential_config.setdefault("soft_density_model_type", "gaussian_kde")
-        sequential_config.setdefault("soft_parameter_names", ["nucleon_width", "normalization"])
-        sequential_config.setdefault(
-            "alpha_parameter_name",
-            self.analysis_config["parameterization"][self.parameterization].get("qhat_alpha_s_parameter", "AlphaS"),
+    def _resolve_sequential_inference_config(self, mcmc_configuration: dict):
+        return resolve_sequential_inference_config(
+            mcmc_configuration=mcmc_configuration,
+            config_file=self.config_file,
+            analysis_config=self.analysis_config,
+            parameterization=self.parameterization,
         )
-        return sequential_config

@@ -1,19 +1,10 @@
-# Configuration for the reduced soft-hard sequential study
-# --------------------------------------------------------
-# This run uses the same reduced hard-sector emulator and observables as the
-# reduced_soft_hard study, but replaces the soft prior on
-#   (nucleon_width, normalization)
-# with the projected soft-sector posterior density model.
+# Configuration for the reduced soft-hard sequential study using the
+# project-side 2D normalizing-flow soft density model.
 #
-# The resulting target is
-#   log L_hard(AlphaS, nucleon_width, normalization)
-# + log p_soft(nucleon_width, normalization)
-# + log pi_alpha(AlphaS)
-#
-# This file is kept separate from reduced_soft_hard.yaml so the original
-# hard-only reduced setup remains unchanged for comparison.
+# This run mirrors reduced_soft_hard_sequential.yaml, but replaces the
+# gaussian_kde soft density artifact with the torch_realnvp_2d flow artifact.
 
-output_dir: "output/reduced_soft_hard_sequential_preprocessed_noPCA"
+output_dir: "output/reduced_soft_hard_sequential_flow_preprocessed_noPCA"
 
 initialize_observables: True
 preprocess_input_data: True
@@ -31,10 +22,6 @@ plot:
 
 debug_level: 0
 
-# ------------------------------------------------
-# Current local reduced-study table campaign.
-# The design and prediction tables are expected to scan:
-#   (AlphaS, nucleon_width, normalization)
 observable_table_dir: "../STAT-outputs/20260401/tables"
 observable_config_dir: "../jetscape-analysis/config"
 
@@ -87,12 +74,11 @@ parameters:
     n_burn_steps: 1000
     n_sampling_steps: 5000
     n_logging_steps: 10
-    # Sequential runs are posterior runs, not hard-likelihood proposal exports.
     export_hard_likelihood_samples: False
     hard_likelihood_outputfilename: "hard_likelihood_samples.csv"
     sequential_inference:
       enabled: True
-      soft_density_model_file: "/Users/Lipei/Documents/Research/heavy-ion-research/projects/STAT_soft_hard/sequential_inference/results/soft_density_kde_2d/kde_soft_posterior_2d.pkl"
+      soft_density_model_file: "/Users/Lipei/Documents/Research/heavy-ion-research/projects/STAT_soft_hard/sequential_inference/results/soft_density_flow_2d/flow_soft_posterior_2d.pt"
       soft_parameter_names: ["nucleon_width", "normalization"]
       alpha_parameter_name: "AlphaS"
 
