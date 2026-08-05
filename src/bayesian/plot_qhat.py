@@ -17,6 +17,7 @@ import pandas as pd
 from bayesian import data_IO, mcmc, plot_utils
 from bayesian.emulation import base
 from bayesian.parameterization import parameterization_info
+from bayesian.posterior_utils import flatten_chain_samples
 
 sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize':18})
 
@@ -81,11 +82,14 @@ def plot(config):
 
     # Get results from file
     results = data_IO.read_dict_from_h5(config.output_dir, config.mcmc_outputfilename, verbose=True)
-    n_walkers, n_steps, n_params = results['chain'].shape
-    posterior = results['chain'].reshape((n_walkers*n_steps, n_params))
-    parameter_names = results['parameter_names'].astype(str).tolist()
-    posterior_df = pd.DataFrame(posterior, columns=parameter_names)
     parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    posterior = flatten_chain_samples(results['chain'])
+    if 'parameter_names' in results:
+        parameter_names = results['parameter_names'].astype(str).tolist()
+    else:
+        parameter_names = parameter_info.sampled_names
+        logger.warning('parameter_names not found in MCMC file. Falling back to config-defined names.')
+    posterior_df = pd.DataFrame(posterior, columns=parameter_names)
     model_samples = parameter_info.expand_sampled_to_full(
         posterior_df[parameter_info.sampled_names].to_numpy(),
         sampled_names=parameter_info.sampled_names,

@@ -431,6 +431,24 @@ def _run_using_pocoMC(
     # NOTE: I create the pool here rather than using the built-in one because I need to initialize the log_posterior!
     ctx = multiprocessing.get_context('spawn')
     parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    # pocoMC may evaluate the likelihood in the parent process in addition to worker
+    # processes, so initialize the shared likelihood globals here as well.
+    log_posterior.initialize_pool_variables(
+        parameter_min,
+        parameter_max,
+        emulation_config,
+        emulation_results,
+        experimental_results,
+        emulator_cov_unexplained,
+        prior_config,
+        {},
+        {},
+        parameter_info.sampled_names,
+        [],
+        parameter_info.full_names,
+        parameter_info.fixed_parameters,
+        config.sequential_inference_config,
+    )
     with ctx.Pool(
         initializer=log_posterior.initialize_pool_variables,
         initargs=[
@@ -464,6 +482,7 @@ def _run_using_pocoMC(
         'weights': weights,
         'logl': logl,
         'logp': logp,
+        'parameter_names': np.array(parameter_info.sampled_names, dtype='S'),
     }
     if config.sequential_inference_config is not None:
         output_dict['sequential_inference'] = config.sequential_inference_config.to_dict()
@@ -514,7 +533,7 @@ def _run_using_pocoMC(
     logz_err_value = output_dict.get("logZ_err")
     chain_data = {'chain': samples, 'weights': weights, 'logl': logl,
                     'logp': logp, 'logz': logz_value, 'logz_err': logz_err_value}
-    with config.mcmc_outputfile.open('wb') as file:
+    with config.sampler_outputfile.open('wb') as file:
         pickle.dump(chain_data, file)
 
 

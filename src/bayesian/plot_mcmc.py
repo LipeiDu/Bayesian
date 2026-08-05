@@ -21,6 +21,7 @@ sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize'
 
 from bayesian import data_IO
 from bayesian import plot_utils
+from bayesian.posterior_utils import flatten_chain_samples
 from bayesian.emulation import base
 from bayesian import mcmc
 from bayesian.parameterization import parameterization_info
@@ -62,18 +63,31 @@ def plot(config: mcmc.MCMCConfig):
 
     # Check that results match config file
     chain = results['chain']
-    n_sampling_steps, n_walkers, n_dim = chain.shape
-    logger.info(f'Plotting MCMC results for chain with n_walkers={n_walkers}, n_sampling_steps={n_sampling_steps}, n_dim={n_dim}')
     logger.info(f'Chain is of size: {os.path.getsize(config.mcmc_outputfile)/(1024*1024):.1f} MB')
 
-    assert chain.shape[0] == config.n_sampling_steps
-    assert chain.shape[1] == config.n_walkers
-    assert chain.shape[2] == len(parameter_names)
+    if chain.ndim == 3:
+        n_sampling_steps, n_walkers, n_dim = chain.shape
+        logger.info(f'Plotting MCMC results for chain with n_walkers={n_walkers}, n_sampling_steps={n_sampling_steps}, n_dim={n_dim}')
 
-    # MCMC plots
-    _plot_acceptance_fraction(results['acceptance_fraction'], plot_dir, config)
-    _plot_log_posterior(results['log_prob'], plot_dir, config)
-    _plot_autocorrelation_time(results, plot_dir, parameter_names)
+        assert chain.shape[0] == config.n_sampling_steps
+        assert chain.shape[1] == config.n_walkers
+        assert chain.shape[2] == len(parameter_names)
+
+        # MCMC plots
+        _plot_acceptance_fraction(results['acceptance_fraction'], plot_dir, config)
+        _plot_log_posterior(results['log_prob'], plot_dir, config)
+        _plot_autocorrelation_time(results, plot_dir, parameter_names)
+    elif chain.ndim == 2:
+        n_samples, n_dim = chain.shape
+        logger.info(f'Plotting flat posterior samples with n_samples={n_samples}, n_dim={n_dim}')
+        if n_dim != len(parameter_names):
+            raise ValueError(
+                f"Flat posterior sample dimension {n_dim} does not match parameter name count {len(parameter_names)}"
+            )
+        logger.info('Detected non-emcee MCMC output format; skipping walker-specific diagnostics.')
+    else:
+        raise ValueError(f"Unsupported chain shape {chain.shape} in MCMC plotter.")
+
     _plot_posterior_pairplot(chain, plot_dir, parameter_names)
 
     # Posterior vs. Design observables
@@ -255,7 +269,7 @@ def _plot_posterior_pairplot(chain, plot_dir, parameter_names, holdout_test = Fa
     :param 1darray holdout_point (optional): point to display
     '''
 
-    samples = chain.reshape((chain.shape[0] * chain.shape[1], chain.shape[2]))
+    samples = flatten_chain_samples(chain)
     # Construct dataframe of samples
     df = pd.DataFrame(samples, columns=[s.decode() if isinstance(s, bytes) else str(s) for s in parameter_names])
 
@@ -358,7 +372,7 @@ def _plot_posterior_observables(chain, plot_dir, config, n_samples=200, paramete
     '''
 
     # Flatten chain to shape (n_steps*n_walkers, n_dim), and sample parameters without replacement
-    posterior = chain.reshape((chain.shape[0]*chain.shape[1], chain.shape[2]))
+    posterior = flatten_chain_samples(chain)
     idx = np.random.choice(posterior.shape[0], size=n_samples, replace=False)
 
     # extract model parameters only before prediction
