@@ -1,0 +1,99 @@
+{
+  "model_type": "gaussian_kde",
+  "columns": [
+    "nucleon_width",
+    "normalization"
+  ],
+  "prior_ranges": [
+    [
+      0.5,
+      1.5
+    ],
+    [
+      10.0,
+      20.0
+    ]
+  ],
+  "transform": "logit_box",
+  "sample_count": 20200,
+  "validation_draws": 5000,
+  "bandwidth_factor": 0.1916202658782731,
+  "source_samples": "/Users/Lipei/Documents/Research/heavy-ion-research/projects/STAT_soft_hard/supporting_workflows/soft_posterior_projection/projected_soft_posterior_2d.csv",
+  "source_metadata": {
+    "source_chain": "external/js-sims-bayes/mcmc/chain-idf-0.hdf",
+    "nwalkers": 100,
+    "nsteps_total": 4040,
+    "burn_fraction": 0.5,
+    "burn_steps": 2020,
+    "thin": 10,
+    "projected_sample_count": 20200,
+    "projected_parameter_labels": [
+      "nucleon_width",
+      "normalization"
+    ],
+    "projected_parameter_indices_in_full_chain": {
+      "nucleon_width": 4,
+      "normalization": 0
+    },
+    "full_parameter_labels": [
+      "$N$[$2.76$TeV]",
+      "$N$[$0.20$TeV]",
+      "$p$",
+      "$\\sigma_k$",
+      "$w$ [fm]",
+      "$d_{\\mathrm{min}}$ [fm]",
+      "$\\tau_R$ [fm/$c$]",
+      "$\\alpha$",
+      "$T_{\\eta,\\mathrm{kink}}$ [GeV]",
+      "$a_{\\eta,\\mathrm{low}}$ [GeV${}^{-1}$]",
+      "$a_{\\eta,\\mathrm{high}}$ [GeV${}^{-1}$]",
+      "$(\\eta/s)_{\\mathrm{kink}}$",
+      "$(\\zeta/s)_{\\max}$",
+      "$T_{\\zeta,c}$ [GeV]",
+      "$w_{\\zeta}$ [GeV]",
+      "$\\lambda_{\\zeta}$",
+      "$b_{\\pi}$",
+      "$T_{\\mathrm{sw}}$ [GeV]",
+      "$\\sigma_M$"
+    ],
+    "sample_order_note": "Samples preserve the existing flattening convention: chain[:, burn_steps:, :].reshape(-1, ndim) followed by thinning."
+  },
+  "data_summary": {
+    "nucleon_width": {
+      "mean": 1.032302308178035,
+      "median": 1.0282071215509707,
+      "std": 0.08263405637549931,
+      "q05": 0.9058805403342197,
+      "q95": 1.1724265134569398
+    },
+    "normalization": {
+      "mean": 14.676133979009643,
+      "median": 14.514297994348318,
+      "std": 0.9154305012373762,
+      "q05": 13.523145231814624,
+      "q95": 16.35605601036487
+    },
+    "correlation": 0.6005268695750986
+  },
+  "validation_summary": {
+    "nucleon_width": {
+      "mean": 1.0338751009282334,
+      "median": 1.0288447753876113,
+      "std": 0.08481973933743236,
+      "q05": 0.9031122120800391,
+      "q95": 1.179706690649215
+    },
+    "normalization": {
+      "mean": 14.70296259049088,
+      "median": 14.545993527547385,
+      "std": 0.9498859533714002,
+      "q05": 13.48804210116866,
+      "q95": 16.515727121768574
+    },
+    "correlation": 0.6116331772116265
+  },
+  "artifacts": {
+    "model_pickle": "/Users/Lipei/Documents/Research/heavy-ion-research/projects/STAT_soft_hard/sequential_inference/results/soft_density_kde_2d/kde_soft_posterior_2d.pkl",
+    "validation_plot": "/Users/Lipei/Documents/Research/heavy-ion-research/projects/STAT_soft_hard/sequential_inference/results/soft_density_kde_2d/kde_soft_posterior_2d_validation.png"
+  }
+}

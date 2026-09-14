@@ -591,18 +591,40 @@ class SortEmulationGroupObservables:
         # to learn the entire mapping
         # NOTE: It doesn't matter what observables file we use here since it's just to find all of the observables which are used.
         all_observables = data_IO.read_dict_from_h5(emulation_config.output_dir, 'observables.h5')
+        # Select only observables represented by active emulator groups. This
+        # allows controlled subset inference (for example, hadrons only) while
+        # reusing an observables file that also contains inactive groups.
+        group_observable_keys = {}
+        for emulation_group_name, emulation_group_config in emulation_config.emulation_groups_config.items():
+            group_observable_keys[emulation_group_name] = data_IO.sorted_observable_list_from_dict(
+                all_observables[prediction_key],
+                observable_filter=emulation_group_config.observable_filter,
+            )
+        active_observable_keys = {
+            observable_key
+            for keys in group_observable_keys.values()
+            for observable_key in keys
+        }
+        sorted_active_observable_keys = [
+            observable_key
+            for observable_key in data_IO.sorted_observable_list_from_dict(all_observables[prediction_key])
+            if observable_key in active_observable_keys
+        ]
+        if not sorted_active_observable_keys:
+            msg = "The active emulator groups do not select any observables."
+            raise ValueError(msg)
+
         current_position = 0
         observable_slices = {}
-        for observable_key in data_IO.sorted_observable_list_from_dict(all_observables[prediction_key]):
+        for observable_key in sorted_active_observable_keys:
             n_bins = all_observables[prediction_key][observable_key]['y'].shape[0]
             observable_slices[observable_key] = slice(current_position, current_position + n_bins)
             current_position += n_bins
 
-        # Now, take advantage of the ordering in the emulator groups. (ie. the ordering in the group
-        # matrix is consistent with the order of the observable names).
+        # Take advantage of the ordering in each emulator group. The ordering
+        # in the group matrix is consistent with the observable-name ordering.
         observable_emulation_group_map = {}
-        for emulation_group_name, emulation_group_config in emulation_config.emulation_groups_config.items():
-            emulation_group_observable_keys = data_IO.sorted_observable_list_from_dict(all_observables[prediction_key], observable_filter=emulation_group_config.observable_filter)
+        for emulation_group_name, emulation_group_observable_keys in group_observable_keys.items():
             current_group_bin = 0
             for observable_key in emulation_group_observable_keys:
                 observable_slice = observable_slices[observable_key]
@@ -623,8 +645,11 @@ class SortEmulationGroupObservables:
 
         # We want the shape to allow us to preallocate the array:
         # Default shape: (n_design_points, n_features)
-        last_observable = list(observable_slices)[-1]
-        shape = (all_observables[prediction_key][observable_key]['y'].shape[1], observable_slices[last_observable].stop)
+        last_observable = sorted_active_observable_keys[-1]
+        shape = (
+            all_observables[prediction_key][last_observable]['y'].shape[1],
+            observable_slices[last_observable].stop,
+        )
         logger.debug(f"{shape=} (note: for all design points)")
 
         return cls(

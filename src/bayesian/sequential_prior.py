@@ -50,7 +50,7 @@ def build_sequential_log_prior_fn(
         target_names=remaining_parameter_names,
     )
     remainder_log_prior_fn = prior_module.make_log_prior_fn(remainder_prior_config, remaining_parameter_names)
-    soft_log_density_fn = _load_soft_density_model(
+    soft_log_density_fn = load_soft_density_model(
         sequential_config=sequential_config,
     )
 
@@ -133,7 +133,7 @@ def _expand_prior_field(
     return expanded
 
 
-def _load_soft_density_model(
+def load_soft_density_model(
     *,
     sequential_config: SequentialInferenceConfig,
 ) -> Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]]:

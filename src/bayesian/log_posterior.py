@@ -209,7 +209,13 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
         # Compute log likelihood at each point in the sample
         # We take constant priors, so the log-likelihood is just the log-posterior
         # (since above we set the log-posterior to -inf for samples outside the parameter bounds)
-        log_posterior[inside] += list(map(_loglikelihood, dY, covariance_matrix))
+        hard_log_likelihood = np.asarray(list(map(_loglikelihood, dY, covariance_matrix)))
+        hard_likelihood_power = (
+            g_sequential_inference_config.hard_likelihood_power
+            if g_sequential_inference_config is not None
+            else 1.0
+        )
+        log_posterior[inside] += hard_likelihood_power * hard_log_likelihood
 
         # Add prior term. In sequential mode this replaces the soft prior subspace with the learned soft posterior.
         active_log_prior_fn = g_sequential_log_prior_fn if g_sequential_log_prior_fn is not None else g_log_prior_fn

@@ -10,7 +10,10 @@ __pycache__/
 .vscode/
 
 # Data
-data/
+data/*
+!data/README.md
+!data/emulator_input_tables/
+!data/emulator_input_tables/**
+!data/sequential_priors/
+!data/sequential_priors/**
 output/
-
-

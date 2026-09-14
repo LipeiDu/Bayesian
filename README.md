@@ -26,6 +26,8 @@ The analysis is steered by the script `steer_analysis.py`, where you can specify
 
 The config files will specify which steps to run along with input/output paths for each step, where applicable.
 
+Compact, reproducibility-critical inputs for the reduced soft-hard study are versioned under `data/`. This includes the 20260401 emulator tables and the validated projected-soft density artifacts. Generated emulators, chains, and posteriors remain under the ignored `output/` directory.
+
 ### To run the analysis:
 
 ```bash

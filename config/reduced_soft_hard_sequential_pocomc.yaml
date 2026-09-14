@@ -22,7 +22,7 @@ plot:
 
 debug_level: 0
 
-observable_table_dir: "../STAT-outputs/20260401/tables"
+observable_table_dir: "data/emulator_input_tables/20260401/tables"
 observable_config_dir: "../jetscape-analysis/config"
 
 observables_filename: "observables.h5"
@@ -79,9 +79,11 @@ parameters:
     hard_likelihood_outputfilename: "hard_likelihood_samples.csv"
     sequential_inference:
       enabled: True
-      soft_density_model_file: "/Users/Lipei/Documents/Research/heavy-ion-research/projects/STAT_soft_hard/sequential_inference/results/soft_density_kde_2d/kde_soft_posterior_2d.pkl"
+      soft_density_model_file: "../data/sequential_priors/projected_soft_kde_2d/kde_soft_posterior_2d.pkl"
       soft_parameter_names: ["nucleon_width", "normalization"]
       alpha_parameter_name: "AlphaS"
+      # beta in p_beta proportional to p_soft * pi(alpha_s) * L_hard**beta.
+      hard_likelihood_power: 1.0
     pocoMC:
       n_effective: 512
       n_active: 250

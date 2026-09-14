@@ -48,6 +48,7 @@ class SequentialInferenceConfig:
     soft_density_model_type: str
     soft_parameter_names: tuple[str, ...]
     alpha_parameter_name: str
+    hard_likelihood_power: float = 1.0
     artifact_metadata: SoftDensityArtifactMetadata | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +58,7 @@ class SequentialInferenceConfig:
             "soft_density_model_type": self.soft_density_model_type,
             "soft_parameter_names": list(self.soft_parameter_names),
             "alpha_parameter_name": self.alpha_parameter_name,
+            "hard_likelihood_power": self.hard_likelihood_power,
         }
         if self.artifact_metadata is not None:
             result["artifact_metadata"] = self.artifact_metadata.to_dict()
@@ -99,12 +101,19 @@ def resolve_sequential_inference_config(
         "alpha_parameter_name",
         analysis_config["parameterization"][parameterization].get("qhat_alpha_s_parameter", "AlphaS"),
     )
+    hard_likelihood_power = float(sequential_config.get("hard_likelihood_power", 1.0))
+    if not 0.0 <= hard_likelihood_power <= 1.0:
+        raise ValueError(
+            "Sequential hard_likelihood_power must lie in [0, 1], "
+            f"not {hard_likelihood_power}."
+        )
 
     base_config = SequentialInferenceConfig(
         soft_density_model_file=model_path,
         soft_density_model_type=model_type,
         soft_parameter_names=soft_parameter_names,
         alpha_parameter_name=alpha_parameter_name,
+        hard_likelihood_power=hard_likelihood_power,
         artifact_metadata=None,
     )
     artifact_metadata = load_soft_density_artifact_metadata(base_config)
@@ -123,6 +132,7 @@ def resolve_sequential_inference_config(
         soft_density_model_type=base_config.soft_density_model_type,
         soft_parameter_names=base_config.soft_parameter_names,
         alpha_parameter_name=base_config.alpha_parameter_name,
+        hard_likelihood_power=base_config.hard_likelihood_power,
         artifact_metadata=artifact_metadata,
     )
 

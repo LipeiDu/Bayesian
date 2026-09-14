@@ -97,6 +97,7 @@ def run_self_check(
         "alpha_parameter_name": sequential_config.alpha_parameter_name,
         "soft_density_model_file": str(sequential_config.soft_density_model_file),
         "soft_density_model_type": sequential_config.soft_density_model_type,
+        "hard_likelihood_power": sequential_config.hard_likelihood_power,
         "artifact_metadata": artifact_metadata.to_dict() if artifact_metadata is not None else None,
         "checks": {
             "sequential_prior_has_sampler": bool(hasattr(sequential_log_prior_fn, "sample")),

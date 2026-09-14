@@ -28,6 +28,7 @@ from bayesian import common_base, data_IO, log_posterior
 from bayesian.emulation import base
 from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group
 from bayesian.parameterization import parameterization_info
+from bayesian.posterior_utils import decompose_target_density, uniform_bounds_to_loc_scale
 from bayesian.sequential_export import export_hard_likelihood_samples
 from bayesian.sequential_inference import resolve_sequential_inference_config
 
@@ -416,10 +417,11 @@ def _run_using_pocoMC(
     # Setup the prior distributions
     logging.info('Generate the prior class for pocoMC ...')
     prior_distributions = []
-    for p_min, p_max in zip(parameter_min, parameter_max, strict=True):
+    prior_locs, prior_scales = uniform_bounds_to_loc_scale(parameter_min, parameter_max)
+    for p_loc, p_scale in zip(prior_locs, prior_scales, strict=True):
         # NOTE: Assuming uniform prior
         # TODO: Need to update this for c1, c2, and c3, which is uniform in log space.
-        prior_distributions.append(scipy.stats.uniform(p_min, p_max))
+        prior_distributions.append(scipy.stats.uniform(loc=p_loc, scale=p_scale))
     prior = pmc.Prior(prior_distributions)
 
     # Create and run the pocoMC sampler
@@ -477,11 +479,38 @@ def _run_using_pocoMC(
     logging.info('Generate the posterior samples ...')
     samples, weights, logl, logp = sampler.posterior() # Weighted posterior samples
 
+    # The callable passed to pocoMC is log_posterior(), so pocoMC's ``logl``
+    # field is the Bayesian target (hard likelihood plus the Bayesian prior),
+    # not the hard-sector likelihood alone.  Save the components explicitly so
+    # downstream diagnostics do not have to infer their meaning from sampler-
+    # specific field names.
+    active_log_prior_fn = (
+        log_posterior.g_sequential_log_prior_fn
+        if log_posterior.g_sequential_log_prior_fn is not None
+        else log_posterior.g_log_prior_fn
+    )
+    log_prior_bayesian = active_log_prior_fn(samples)
+    hard_likelihood_power = (
+        config.sequential_inference_config.hard_likelihood_power
+        if config.sequential_inference_config is not None
+        else 1.0
+    )
+    log_likelihood_hard, log_target = decompose_target_density(
+        logl,
+        log_prior_bayesian,
+        hard_likelihood_power=hard_likelihood_power,
+    )
+    log_likelihood_hard_tempered = hard_likelihood_power * log_likelihood_hard
+
     output_dict = {
         'chain': samples,
         'weights': weights,
         'logl': logl,
         'logp': logp,
+        'log_target': log_target,
+        'log_likelihood_hard': log_likelihood_hard,
+        'log_likelihood_hard_tempered': log_likelihood_hard_tempered,
+        'log_prior_bayesian': log_prior_bayesian,
         'parameter_names': np.array(parameter_info.sampled_names, dtype='S'),
     }
     if config.sequential_inference_config is not None:
@@ -510,6 +539,10 @@ def _run_using_pocoMC(
         "weights": weights,
         "logl": logl,
         "logp": logp,
+        "log_target": log_target,
+        "log_likelihood_hard": log_likelihood_hard,
+        "log_likelihood_hard_tempered": log_likelihood_hard_tempered,
+        "log_prior_bayesian": log_prior_bayesian,
         "parameter_names": np.array(parameter_info.sampled_names, dtype='S'),
     }
     if config.sequential_inference_config is not None:

@@ -1,0 +1,195 @@
+output_dir: output/reduced_soft_hard_sequential_tempered_beta_0p25
+initialize_observables: false
+preprocess_input_data: false
+fit_emulators: false
+run_mcmc: true
+run_closure_tests: false
+plot:
+  input_data: false
+  emulators: false
+  mcmc: false
+  qhat: false
+  closure_tests: false
+  across_analyses: false
+debug_level: 0
+observable_table_dir: data/emulator_input_tables/20260401/tables
+observable_config_dir: ../jetscape-analysis/config
+observables_filename: observables.h5
+skip_standard_analyses: false
+skip_inference_workflows: true
+inference_workflows: {}
+parameters:
+  preprocessing_parameters:
+    smoothing: &id007
+      outlier_n_RMS: 2.0
+      interpolation_method: linear
+      max_n_feature_outliers_to_interpolate: 2
+  emulator_parameters:
+    force_retrain: false
+    kernels: &id008
+      active:
+      - matern
+      - noise
+      matern:
+        nu: 1.5
+        length_scale_bounds_factor:
+        - 0.01
+        - 100
+      rbf:
+        length_scale_bounds_factor:
+        - 0.01
+        - 100
+      constant:
+        constant_value: 1.0
+        constant_value_bounds:
+        - 0.001
+        - 10
+      noise:
+        type: white
+        args:
+          noise_level: 0.25
+          noise_level_bounds:
+          - 0.0001
+          - 1
+    GPR: &id009
+      n_restarts: 50
+      alpha: 1.0e-10
+    cross_validation: false
+    cross_validation_k: 5
+    independent_validation: true
+  mcmc_parameters:
+    mcmc_package: pocoMC
+    n_walkers: 100
+    n_burn_steps: 1000
+    n_sampling_steps: 5000
+    n_logging_steps: 10
+    export_hard_likelihood_samples: false
+    hard_likelihood_outputfilename: hard_likelihood_samples.csv
+    sequential_inference: &id010
+      enabled: true
+      soft_density_model_file: ../../data/sequential_priors/projected_soft_kde_2d/kde_soft_posterior_2d.pkl
+      soft_parameter_names:
+      - nucleon_width
+      - normalization
+      alpha_parameter_name: AlphaS
+      hard_likelihood_power: 0.25
+    pocoMC: &id011
+      n_effective: 512
+      n_active: 250
+      draw_n_prior_samples: 1024
+      sampler_type: tpcn
+      n_total_samples: 5000
+      n_importance_samples_for_evidence: 5000
+  closure:
+    confidence: 0.9
+analysis_base:
+  model_name: MATTER+LBT
+  parameterizations: &id001
+  - exponential
+  sqrts_list: &id002
+  - 200
+  - 2760
+  - 5020
+  centrality_range: &id003
+  - 0
+  - 10
+  recoil_scheme: negative_recominber
+  parameterization: &id004
+    exponential:
+      names:
+      - AlphaS
+      - nucleon_width
+      - normalization
+      min:
+      - 0.1
+      - 0.5
+      - 10.0
+      max:
+      - 0.5
+      - 1.5
+      - 20.0
+      qhat_alpha_s_parameter: AlphaS
+      fixed_model_parameters:
+        Q0: 1.65262
+        C1: -4.51052
+        C2: -1.31168
+        Tau0: 0.325466
+        C3: 3.67332
+  alpha: 0.2
+  design_points_to_exclude: &id005
+  - 0
+  - 2
+  - 3
+  validation_indices: &id006
+  - 0
+  - 0
+analyses:
+  reduced_soft_hard:
+    model_name: MATTER+LBT
+    parameterizations: *id001
+    sqrts_list: *id002
+    centrality_range: *id003
+    recoil_scheme: negative_recominber
+    parameterization: *id004
+    alpha: 0.2
+    design_points_to_exclude: *id005
+    validation_indices: *id006
+    parameters:
+      preprocessing:
+        smoothing: *id007
+      emulators:
+        hadron_group:
+          force_retrain: false
+          kernels: *id008
+          GPR: *id009
+          cross_validation: false
+          cross_validation_k: 5
+          independent_validation: true
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+          - hadron__pt_
+        jet_group:
+          force_retrain: false
+          kernels: *id008
+          GPR: *id009
+          cross_validation: false
+          cross_validation_k: 5
+          independent_validation: true
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+          - jet__pt_
+          observable_exclude_list:
+          - pt_y_atlas
+          - 2760__PbPb__inclusive_chjet__pt_alice
+      mcmc:
+        mcmc_package: pocoMC
+        n_walkers: 100
+        n_burn_steps: 1000
+        n_sampling_steps: 5000
+        n_logging_steps: 10
+        export_hard_likelihood_samples: false
+        hard_likelihood_outputfilename: hard_likelihood_samples.csv
+        sequential_inference: *id010
+        pocoMC: *id011
+      closure:
+        confidence: 0.9
+    cuts:
+      chjet__pt_star__R0.2:
+      - 14
+      - 100
+      chjet__pt_star__R0.4:
+      - 16
+      - 100
+    plot_panel_shapes:
+    - - 3
+      - 3
+    - - 3
+      - 3
+    - - 3
+      - 3
+    - - 3
+      - 3
+    - - 3
+      - 3

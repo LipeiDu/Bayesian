@@ -34,7 +34,7 @@ debug_level: 0
 # Current local reduced-study table campaign.
 # The design and prediction tables are expected to scan:
 #   (AlphaS, nucleon_width, normalization)
-observable_table_dir: "../STAT-outputs/20260401/tables"
+observable_table_dir: "data/emulator_input_tables/20260401/tables"
 observable_config_dir: "../jetscape-analysis/config"
 
 # Use preprocessed inputs only if you explicitly run preprocessing first.
@@ -94,7 +94,7 @@ parameters:
       # When enabled, the Bayesian code replaces the soft prior on
       # (nucleon_width, normalization) with the learned soft posterior density.
       # The path may be absolute or relative to this config file.
-      soft_density_model_file: "/Users/Lipei/Documents/Research/heavy-ion-research/projects/STAT_soft_hard/sequential_inference/results/soft_density_kde_2d/kde_soft_posterior_2d.pkl"
+      soft_density_model_file: "../data/sequential_priors/projected_soft_kde_2d/kde_soft_posterior_2d.pkl"
       soft_density_model_type: "gaussian_kde"
       soft_parameter_names: ["nucleon_width", "normalization"]
       alpha_parameter_name: "AlphaS"
