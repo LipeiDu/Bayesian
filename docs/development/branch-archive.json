@@ -7,21 +7,27 @@
       "remote_tip": "3ba50194cf1db6ede52ef854ed034a229fcf5ea1",
       "contained_in_review": true,
       "unique_commits": [],
-      "archive_tag": "archive/2026-11-19/bayesian_evidence"
+      "archive_tag": "archive/2026-11-19/bayesian_evidence",
+      "remote_branch_retired": true,
+      "remote_archive_tag_verified": true
     },
     {
       "branch": "multistep_inference",
       "remote_tip": "63203105ed630fb001953878688e9e86559c46b2",
       "contained_in_review": true,
       "unique_commits": [],
-      "archive_tag": "archive/2026-11-19/multistep_inference"
+      "archive_tag": "archive/2026-11-19/multistep_inference",
+      "remote_branch_retired": true,
+      "remote_archive_tag_verified": true
     },
     {
       "branch": "model_discrepancy",
       "remote_tip": "ba8133cfaaf11900b301229174693dd8868ef93f",
       "contained_in_review": true,
       "unique_commits": [],
-      "archive_tag": "archive/2026-11-19/model_discrepancy"
+      "archive_tag": "archive/2026-11-19/model_discrepancy",
+      "remote_branch_retired": true,
+      "remote_archive_tag_verified": true
     },
     {
       "branch": "refactor_emulator",
@@ -30,17 +36,23 @@
       "unique_commits": [
         "80c0b42432a5af2cf314a6b7159778cf07f40975 Incorporated feedback and made further changes"
       ],
-      "archive_tag": "archive/2026-11-19/refactor_emulator"
+      "archive_tag": "archive/2026-11-19/refactor_emulator",
+      "remote_branch_retired": true,
+      "remote_archive_tag_verified": true
     },
     {
       "branch": "soft-hard-study",
       "remote_tip": "97ea901a3b31e45f72f1fa905b166bd9ee406bc1",
       "contained_in_review": true,
       "unique_commits": [],
-      "archive_tag": "archive/2026-11-19/soft-hard-study"
+      "archive_tag": "archive/2026-11-19/soft-hard-study",
+      "remote_branch_retired": true,
+      "remote_archive_tag_verified": true
     }
   ],
-  "status": "preservation_tags_published_retirement_pending",
+  "status": "retired_with_verified_remote_preservation_tags",
   "default_branch": "main",
-  "default_branch_changed": false
+  "default_branch_changed": false,
+  "retired_on": "2026-11-19",
+  "delivery_revision": "36fa16ac12a580d48dba89bd101aee1aa9d5d2a6"
 }
