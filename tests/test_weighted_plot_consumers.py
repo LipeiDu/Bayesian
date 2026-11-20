@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 from bayesian import plot_analyses, plot_closure, plot_mcmc, plot_qhat
-from bayesian.compare_sequential_observable_subsets import DensitySamples, _weighted_limits
-from bayesian.hard_likelihood_diagnostics import load_posterior_samples
+from bayesian.diagnostics.compare_sequential_observable_subsets import DensitySamples, _weighted_limits
+from bayesian.diagnostics.hard_likelihood_diagnostics import load_posterior_samples
 from tests.sampler_examples import build_gaussian_example
 from tests.sequential_examples import build_sequential_example
 

@@ -18,7 +18,7 @@ from bayesian.emulation import base
 from bayesian.parameterization import parameterization_info
 from bayesian.posterior_utils import (model_posterior_samples, select_posterior_samples, maximum_posterior_sample)
 from bayesian.prior import sample_prior
-from bayesian import sequential_prior
+from bayesian.sequential import prior as sequential_prior
 
 sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize':18})
 

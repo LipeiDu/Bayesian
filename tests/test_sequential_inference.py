@@ -6,7 +6,7 @@ import pickle
 import numpy as np
 import pytest
 
-from bayesian import sequential_prior
+from bayesian.sequential import prior as sequential_prior
 from bayesian.prepare_tempered_sequential_runs import beta_tag, build_tempered_config
 from bayesian.posterior_utils import (
     decompose_target_density,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bayesian.fixed_medium_alpha_scan import normalize_log_curve, summarize_density
+from bayesian.diagnostics.fixed_medium_alpha_scan import normalize_log_curve, summarize_density
 
 
 def test_normalize_log_curve_integrates_to_one() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bayesian.hard_likelihood_diagnostics import (
+from bayesian.diagnostics.hard_likelihood_diagnostics import (
     _short_observable_label,
     weighted_quantile,
     weighted_summary,

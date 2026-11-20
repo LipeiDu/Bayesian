@@ -3,6 +3,15 @@
 Numerical helpers remain in bayesian.diagnostics; the CLI recipe belongs to
 STAT_soft_hard. See docs/development/ownership.md for installation and ownership.
 """
+
+import warnings
+
+warnings.warn(
+    "bayesian.fixed_medium_alpha_scan is deprecated; use bayesian.diagnostics.fixed_medium_alpha_scan instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from importlib import import_module
 
 from bayesian.diagnostics.fixed_medium_alpha_scan import (

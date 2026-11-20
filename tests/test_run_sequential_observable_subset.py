@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from bayesian.run_sequential_observable_subset import select_emulator_groups
+from bayesian.diagnostics.run_sequential_observable_subset import select_emulator_groups
 
 
 def _analysis_config() -> dict:

@@ -3,6 +3,15 @@
 Numerical helpers remain in bayesian.diagnostics; the CLI recipe belongs to
 STAT_soft_hard. See docs/development/ownership.md for installation and ownership.
 """
+
+import warnings
+
+warnings.warn(
+    "bayesian.compare_sequential_observable_subsets is deprecated; use bayesian.diagnostics.compare_sequential_observable_subsets instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from importlib import import_module
 
 from bayesian.diagnostics.compare_sequential_observable_subsets import (

@@ -3,6 +3,15 @@
 Numerical helpers remain in bayesian.diagnostics; the CLI recipe belongs to
 STAT_soft_hard. See docs/development/ownership.md for installation and ownership.
 """
+
+import warnings
+
+warnings.warn(
+    "bayesian.hard_likelihood_diagnostics is deprecated; use bayesian.diagnostics.hard_likelihood_diagnostics instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from importlib import import_module
 
 from bayesian.diagnostics.hard_likelihood_diagnostics import (

@@ -9,7 +9,7 @@ import numpy as np
 import yaml
 
 from bayesian import prior as prior_module
-from bayesian import sequential_prior
+from bayesian.sequential import prior as sequential_prior
 from bayesian.mcmc import MCMCConfig
 from bayesian.model_discrepancy import parse_discrepancy_group_settings
 from bayesian.parameterization import parameterization_info

@@ -3,7 +3,7 @@
 Library implementation details stay with the package they implement. Study
 recipes, local input locations, and engineering review history have separate
 owners. Public-facing support is defined by the native configurations and
-[component guides](../features/README.md), with regression tests in this checkout.
+[component guides](../inference_guide.md), with regression tests in this checkout.
 An underscore-prefixed implementation helper is not a stable external API.
 
 | Material | Owner and location | Tracking and support |
@@ -11,7 +11,7 @@ An underscore-prefixed implementation helper is not a stable external API.
 | Likelihood, emulator organization, priors, samplers, discrepancy, sequential loading, output semantics | `Bayesian/src/bayesian/` | Public backend, tested here |
 | Native driver, sequential self-check, tempered-config generator | `Bayesian/src/bayesian/` | Public commands |
 | Reusable posterior, likelihood and scan diagnostics | `Bayesian/src/bayesian/diagnostics/` | Backend helper library; APIs may evolve with tests |
-| Portable statistical demonstrations | `Bayesian/config/examples/`, `examples/inference/`, `docs/features/` | Public configs, prepared analytic inputs, and executable validation |
+| Portable statistical demonstrations | `Bayesian/config/examples/`, `examples/inference/`, `docs/inference_guide.md` | Public configs, prepared analytic inputs, and executable validation |
 | Regression and integration tests | `Bayesian/tests/` | Stay beside the implementation, including generic tests motivated by a study |
 | Reduced soft-hard production/reproduction recipes | `jetscape-bayesian-workflows` | Study workflow and artifact provenance |
 | Study-only diagnostic CLI defaults and research paths | `STAT_soft_hard/supporting_workflows/bayesian_backend_tools/stat_bayesian_tools/` | Private research workspace, separately tracked |
@@ -80,3 +80,11 @@ git switch -c inspect-emulator-refactor archive/2026-11-19/refactor_emulator
 
 The reviewed public branch is `codex/inference-components`, based on the
 published study baseline `97ea901`. The default `main` branch remains unchanged.
+
+## Deprecated module imports
+
+The nine historical top-level diagnostic/sequential modules emit `DeprecationWarning`.
+Use `bayesian.diagnostics.<name>` or `bayesian.sequential.config`, `.prior`, `.flow`,
+and `.export`. Internal code and regular tests use these canonical imports.
+Only compatibility tests intentionally import the old names. No removal release
+is scheduled yet; existing external callers retain compatibility.

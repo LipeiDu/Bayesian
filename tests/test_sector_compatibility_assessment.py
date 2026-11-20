@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bayesian.sector_compatibility_assessment import (
+from bayesian.diagnostics.sector_compatibility_assessment import (
     predictive_moments,
     soft_hdr_thresholds,
     weighted_hdr_fractions,

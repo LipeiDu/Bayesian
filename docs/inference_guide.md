@@ -5,11 +5,12 @@ and emulator covariance in a Gaussian likelihood, and samples the posterior.
 The runnable examples use exact linear emulators so numerical references are
 available without a simulation campaign. Start with `config/examples/baseline.yaml`.
 
-| Method | Prior input | Purpose |
+| Method | Prior input / uncertainty | Purpose and runnable YAML |
 | --- | --- | --- |
-| Plain inference | Declared manual priors | Establish a reference fit |
-| Sequential inference | Projected soft KDE or flow artifact | Update shared medium parameters with hard data |
-| Multistep inference | A first-stage posterior, fitted as Gaussian or KDE | Chain two analyses through a named source prior |
+| Plain inference | Declared manual priors | Reference fit: [baseline](../config/examples/baseline.yaml) |
+| Model discrepancy | Added covariance kernel | Represent unresolved model error: [fixed](../config/examples/discrepancy_fixed.yaml), [inferred](../config/examples/discrepancy_inferred.yaml) |
+| Sequential inference | Projected soft KDE or flow artifact | Update shared parameters: [KDE](../config/examples/sequential_kde.yaml), [flow](../config/examples/sequential_flow.yaml) |
+| Multistep inference | First-stage posterior fitted as Gaussian or KDE | Chain two analyses: [Gaussian](../config/examples/multistep_gaussian.yaml), [KDE](../config/examples/multistep_kde.yaml) |
 
 For independent datasets A and B, updating uses
 `p(theta | A,B) ∝ L_B(theta) p(theta | A)`; count each dataset once.
@@ -36,19 +37,10 @@ an implementation error.
 
 ## Setup and examples
 
-This guide covers model discrepancy, projected-soft sequential inference, and
-two-dataset posterior-to-prior inference. The runnable examples use native
-Bayesian **YAML** configuration files and inexpensive analytic emulators. They
-exercise the real driver, samplers, likelihood, prior loaders, saved outputs,
-and component checks without running JETSCAPE simulations.
-
-| Component | Guide | Native configurations |
-| --- | --- | --- |
-| Plain Gaussian fit | This introductory example | [baseline](../config/examples/baseline.yaml) |
-| Fixed and inferred covariance discrepancy | [Model discrepancy](#model-discrepancy) | [fixed](../config/examples/discrepancy_fixed.yaml), [inferred](../config/examples/discrepancy_inferred.yaml) |
-| Projected-soft posterior used as a prior | [Sequential inference](#sequential-inference) | [KDE](../config/examples/sequential_kde.yaml), [flow](../config/examples/sequential_flow.yaml) |
-| Two datasets fitted in two steps | [Multistep inference](#multistep-inference) | [Gaussian source](../config/examples/multistep_gaussian.yaml), [KDE source](../config/examples/multistep_kde.yaml) |
-| Numerical guarantees, outputs, evidence, and test commands | [Validation and outputs](#validation-and-outputs) | [Automated native-recipe tests](../tests/test_public_examples.py) |
+The YAML examples exercise the real driver, samplers and output verifier with
+analytic emulators. They require no JETSCAPE simulation run. See
+[validation and outputs](#validation-and-outputs) for numerical guarantees and
+[native-recipe tests](../tests/test_public_examples.py) for automated checks.
 
 ### Environment
 
@@ -472,7 +464,7 @@ study posteriors, private command packages, a JETSCAPE installation, or a GPU.
 They use the tracked table fixture and projected-soft artifacts where indicated.
 The public recipes exercise both emcee and pocoMC.
 
-The 2026-11-19 validation after module reorganization passed **238 tests in 549.61 seconds**,
+The 2026-11-19 validation after canonical-import cleanup passed **247 tests in 549.16 seconds**,
 including all seven native YAML recipes. The reference example metrics and figures
 are retained in [example-validation.json](features/example-validation.json) and the
 component guides. The sequential function and class definitions were also compared by AST with

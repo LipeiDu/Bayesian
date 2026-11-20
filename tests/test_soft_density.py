@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from scipy.stats import truncnorm
 
-from bayesian import sequential_prior
+from bayesian.sequential import prior as sequential_prior
 from bayesian.sequential.config import validate_soft_density_artifact_payload
 from tests.sequential_examples import BOUNDS, artifact_config, artifact_payload, reference_soft_density
 
