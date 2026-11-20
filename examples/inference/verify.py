@@ -14,8 +14,8 @@ from scipy.stats import gaussian_kde, multivariate_normal, norm, truncnorm
 mpl.use("Agg")
 import matplotlib.pyplot as plt
 
-from bayesian.sequential_inference import resolve_sequential_inference_config
-from bayesian.sequential_prior import load_soft_density_model
+from bayesian.sequential.config import resolve_sequential_inference_config
+from bayesian.sequential.prior import load_soft_density_model
 from examples.inference.models import (
     DATASETS,
     DISC_MATRIX,
@@ -315,6 +315,30 @@ def _multistep(config, runs, output):
     }
 
 
+def _baseline(run, output):
+    matrix = LINEAR_MATRIX[:, :2]
+    noise = np.diag(ERROR**2)
+    mean, covariance = _gaussian_update(noise, DATASETS["A"], matrix)
+    stats = _moments(run, mean, covariance)
+    fields = _check_fields(run, _likelihood(run["samples"], matrix, DATASETS["A"], noise),
+                           norm.logpdf(run["samples"], PRIOR_MEAN, PRIOR_STD).sum(axis=1))
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), layout="constrained")
+    errors = []
+    for dim, ax in enumerate(axes):
+        points = np.linspace(mean[dim] - 4*np.sqrt(covariance[dim, dim]),
+                             mean[dim] + 4*np.sqrt(covariance[dim, dim]), 160)
+        errors.append(_cdf_plot(ax, run, dim, points,
+                               norm.cdf(points, mean[dim], np.sqrt(covariance[dim, dim]))))
+        ax.set_xlabel(run["names"][dim])
+        ax.legend(fontsize=8)
+    fig.savefig(output / "validation.png", dpi=150)
+    plt.close(fig)
+    if max(errors) > 0.17:
+        raise AssertionError(f"Baseline CDF error {max(errors)}")
+    return {**stats, "density_errors": fields, "marginal_cdf_errors": errors,
+            "reference": "analytic Gaussian"}
+
+
 def verify(output_dir):
     output = Path(output_dir).resolve()
     config = yaml.safe_load((output / "resolved.yaml").read_text())
@@ -325,6 +349,8 @@ def verify(output_dir):
     ):
         if kind.startswith("discrepancy"):
             result = _fixed_or_inferred(config, config["analyses"]["demo"], runs["demo"], output)
+        elif kind == "baseline":
+            result = _baseline(runs["demo"], output)
         elif kind == "sequential":
             result = _sequential(config, config["analyses"]["demo"], runs["demo"], output)
         else:

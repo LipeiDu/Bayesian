@@ -30,6 +30,7 @@ cached_reference = lru_cache()(posterior_reference)
 
 @pytest.mark.parametrize("mode", ["fixed", "inferred"])
 @pytest.mark.parametrize("sampler", ["emcee", "pocoMC"])
+@pytest.mark.slow
 def test_discrepancy_sampler_matches_reference(tmp_path, monkeypatch, mode, sampler):
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "1")
     config = build_discrepancy_example(tmp_path, sampler, mode)
@@ -78,6 +79,7 @@ def test_discrepancy_sampler_matches_reference(tmp_path, monkeypatch, mode, samp
     assert list(config.output_dir.glob("plot_discrepancy_group_*/*.pdf"))
 
 
+@pytest.mark.slow
 def test_discrepancy_quadrature_converges():
     coarse, fine = cached_reference("inferred"), cached_reference("inferred", 49)
     np.testing.assert_allclose(coarse["mean"], fine["mean"], atol=0.002, rtol=0)

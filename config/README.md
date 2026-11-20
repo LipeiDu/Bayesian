@@ -1,7 +1,9 @@
 # Configuration ownership
 
+Start with `examples/baseline.yaml` for a plain reference fit.
+
 The maintained public quickstarts are in [`examples/`](examples/), with
-[component guides](../docs/features/README.md) and a preparation command that
+[inference guide](../docs/inference_guide.md) and a preparation command that
 writes all analytic inputs before the native Bayesian driver runs.
 
 Other YAML files are historical laboratory and reduced-study recipes. Their

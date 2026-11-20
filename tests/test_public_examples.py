@@ -10,6 +10,7 @@ from examples.inference.verify import verify
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = [
+    "baseline",
     "discrepancy_fixed",
     "discrepancy_inferred",
     "sequential_kde",
@@ -20,6 +21,7 @@ CASES = [
 
 
 @pytest.mark.parametrize("case", CASES)
+@pytest.mark.slow
 def test_public_native_example(tmp_path, monkeypatch, case):
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "1")
     config = prepare(ROOT / "config/examples" / f"{case}.yaml", tmp_path / case)

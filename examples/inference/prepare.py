@@ -43,7 +43,7 @@ def _inputs(kind, datasets, seed):
         name = "5020__PbPb__hadron__pt_demo____0-5"
         observations["Data"][name] = _observation([0.32, 1.08], [0.025, 0.15], [1, 2])
         emulators["linear"] = [LinearEmulator([[1, 0, 0], [0, 1, 0.03]], [0.015, 0.03], [0, -0.45])]
-    elif kind == "multistep":
+    elif kind in {"baseline", "multistep"}:
         for dataset in datasets:
             name = f"5020__PbPb__hadron__pt_{dataset.lower()}____0-5"
             observations["Data"][name] = _observation(DATASETS[dataset], [0.2, 0.15], [1, 2])

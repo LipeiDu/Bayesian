@@ -59,6 +59,9 @@ record is in [branch-archive.json](branch-archive.json). The public validation
 guide contains the executable test commands; the private review records the
 full debugging sequence, study verification, and internal discussion.
 
+The detailed engineering review is maintained privately in
+`heavy-ion-research/infrastructure/bayesian-backend-review/2026-11-19/`.
+
 ## Preserved branches
 
 The inactive `bayesian_evidence`, `multistep_inference`, `model_discrepancy`,

@@ -13,7 +13,7 @@ from bayesian.posterior_utils import (
     flatten_chain_samples,
     uniform_bounds_to_loc_scale,
 )
-from bayesian.sequential_inference import resolve_sequential_inference_config
+from bayesian.sequential.config import resolve_sequential_inference_config
 
 
 def _analysis_config() -> dict:

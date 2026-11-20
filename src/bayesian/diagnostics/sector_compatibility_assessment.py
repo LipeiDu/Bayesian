@@ -36,8 +36,8 @@ from bayesian.diagnostics.hard_likelihood_diagnostics import (
     load_posterior_samples,
     weighted_summary,
 )
-from bayesian.sequential_inference import SequentialInferenceConfig
-from bayesian.sequential_prior import load_soft_density_model
+from bayesian.sequential.config import SequentialInferenceConfig
+from bayesian.sequential.prior import load_soft_density_model
 
 logger = logging.getLogger(__name__)
 

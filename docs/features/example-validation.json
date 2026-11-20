@@ -187,5 +187,33 @@
       "second": "pocoMC",
       "joint": "pocoMC"
     }
+  },
+  "baseline": {
+    "mean": [
+      -0.05049008937238551,
+      0.9466601487133882
+    ],
+    "reference_mean": [
+      -0.02861847312675106,
+      0.9655034293350808
+    ],
+    "max_mean_error": 0.021871616245634454,
+    "max_covariance_error": 0.004237524378072292,
+    "draws": 8000,
+    "density_errors": {
+      "likelihood": 1.7763568394002505e-15,
+      "prior": 0.0,
+      "target": 1.7763568394002505e-15
+    },
+    "marginal_cdf_errors": [
+      0.06645457892633388,
+      0.06742440265810112
+    ],
+    "reference": "analytic Gaussian",
+    "status": "passed",
+    "example_kind": "baseline",
+    "samplers": {
+      "demo": "emcee"
+    }
   }
 }

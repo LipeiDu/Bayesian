@@ -153,6 +153,7 @@ messages_control.disable = [
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config"]
+markers = ["slow: real sampler runs or costly numerical integration"]
 xfail_strict = true
 filterwarnings = ["error"]
 log_cli_level = "INFO"

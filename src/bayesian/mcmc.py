@@ -30,8 +30,8 @@ from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_o
 from bayesian.parameterization import parameterization_info
 from bayesian.posterior_utils import (decompose_target_density, uniform_bounds_to_loc_scale,
                                       weighted_quantile, shortest_interval, maximum_posterior_sample)
-from bayesian.sequential_export import export_hard_likelihood_samples
-from bayesian.sequential_inference import resolve_sequential_inference_config
+from bayesian.sequential.export import export_hard_likelihood_samples
+from bayesian.sequential.config import resolve_sequential_inference_config
 
 logger = logging.getLogger(__name__)
 

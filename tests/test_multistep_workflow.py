@@ -24,6 +24,7 @@ from tests.multistep_examples import (
 
 @pytest.mark.parametrize("method", ["kde", "gaussian"])
 @pytest.mark.parametrize("sampler", ["emcee", "pocoMC"])
+@pytest.mark.slow
 def test_two_step_sampler_matches_exact_joint_update(tmp_path, monkeypatch, sampler, method):
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "1")
     path, raw, source, weights = build_multistep_example(tmp_path, sampler, method)

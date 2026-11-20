@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from bayesian import prepare_tempered_sequential_runs as preparation
-from bayesian.sequential_inference import resolve_sequential_inference_config
+from bayesian.sequential.config import resolve_sequential_inference_config
 from tests.sequential_examples import artifact_config
 
 

@@ -21,6 +21,7 @@ def gaussian_run(request, tmp_path, monkeypatch):
     return config
 
 
+@pytest.mark.slow
 def test_sampler_outputs_match_analytic_density(gaussian_run) -> None:
     config = gaussian_run
     with h5py.File(config.mcmc_output_dir / "posterior.h5") as stream:

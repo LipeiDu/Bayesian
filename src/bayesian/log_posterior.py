@@ -19,7 +19,7 @@ from bayesian import prior as prior_module
 from bayesian.model_discrepancy import add_discrepancy_covariance_all_groups, discrepancy_parameter_indices
 from bayesian.parameterization import ParameterizationInfo
 from bayesian import sequential_prior
-from bayesian.sequential_inference import SequentialInferenceConfig
+from bayesian.sequential.config import SequentialInferenceConfig
 
 logger = logging.getLogger(__name__)
 

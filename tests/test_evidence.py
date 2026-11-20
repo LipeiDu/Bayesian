@@ -70,6 +70,7 @@ def test_bare_sampler_evidence_cannot_claim_a_normalized_result():
 
 
 @pytest.mark.parametrize("sampler_type", ["emcee", "pocoMC"])
+@pytest.mark.slow
 def test_real_sampler_evidence_matches_analytic_gaussian(tmp_path, monkeypatch, sampler_type):
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "1")
     config = build_gaussian_example(tmp_path, sampler_type)

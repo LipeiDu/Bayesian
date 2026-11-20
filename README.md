@@ -37,14 +37,10 @@ python -m bayesian.steer_analysis -c ./config/jet_substructure.yaml
 
 Configure the software as usual for python using a virtual environment.
 
-## Reproducible components and tests
+## Inference examples and tests
 
-Start with the [public inference guide](docs/features/README.md) for runnable
-YAML examples of model discrepancy, sequential KDE/flow inference, and two-step
-posterior-to-prior inference. The examples prepare their own analytic emulator
-inputs and include mathematical validation and figures.
-
-The [validation guide](docs/features/validation.md) documents regression commands,
-weighted output semantics, and evidence limitations. [Component ownership](docs/development/ownership.md)
-separates the reusable backend from study command recipes and internal review
-records. Backend tests remain in `tests/`.
+The [inference guide](docs/inference_guide.md) starts with a plain Gaussian fit,
+then demonstrates model discrepancy, sequential soft-to-hard updates and
+two-dataset multistep inference. Native YAML examples run through the real
+driver and include numerical verification and figures. See the guide for setup,
+method assumptions, outputs, and fast/full test commands.

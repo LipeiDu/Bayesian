@@ -12,6 +12,7 @@ from tests.sequential_examples import UNCERTAINTY, build_sequential_example, har
 @pytest.mark.parametrize("model_type", ["gaussian_kde", "torch_realnvp_2d"])
 @pytest.mark.parametrize("sampler", ["emcee", "pocoMC"])
 @pytest.mark.parametrize("power", [0.0, 0.25, 1.0])
+@pytest.mark.slow
 def test_real_sequential_sampler_components(tmp_path, monkeypatch, model_type, sampler, power) -> None:
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "1")
     config = build_sequential_example(tmp_path, sampler, model_type, power)

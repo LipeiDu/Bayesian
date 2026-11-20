@@ -9,7 +9,7 @@ import numpy as np
 import yaml
 
 from bayesian import mcmc
-from bayesian.sequential_inference import SequentialInferenceConfig
+from bayesian.sequential.config import SequentialInferenceConfig
 from tests.sampler_examples import build_gaussian_example
 
 ROOT = Path(__file__).resolve().parents[1]
