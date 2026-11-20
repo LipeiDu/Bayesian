@@ -1,0 +1,16 @@
+# Tested with Python 3.10.20; these source-checkout demos do not need gpflow or PyMC.
+numpy==1.26.4
+scipy==1.15.3
+matplotlib==3.10.8
+h5py==3.16.0
+scikit-learn==1.7.2
+emcee==3.1.6
+pocomc==1.2.6
+torch==2.2.2
+attrs==26.1.0
+rich==14.3.3
+PyYAML==6.0.3
+pandas==2.3.3
+seaborn==0.13.2
+silx==2.2.2
+pytest==9.0.3

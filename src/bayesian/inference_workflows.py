@@ -1,10 +1,11 @@
 import logging
-import os
+from copy import deepcopy
+from importlib import import_module
 from pathlib import Path
-import shutil
-from bayesian import mcmc, plot_mcmc, plot_qhat, plot_closure
-from bayesian.emulation import base
-from bayesian.prior import verify_prior_vs_posterior
+
+from bayesian import mcmc
+from bayesian.parameterization import parameterization_info
+from bayesian.prior import load_posterior_as_prior, verify_prior_vs_posterior
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,12 @@ def process_inference_workflow(config_file: Path, output_dir: Path, workflows: d
             _run_multistep_inference(workflow_name, workflow_config, config_file, output_dir, all_analyses)
 
         else:
-            raise ValueError(f"Unknown workflow type: {workflow_type}")
+            message = f"Unknown workflow type: {workflow_type}"
+            raise ValueError(message)
 
 
 ###################################################################################################
-def _run_joint_inference(workflow_name: str, workflow_config: dict, config_file: Path, output_dir: Path, all_analyses: dict) -> None:
+def _run_joint_inference(workflow_name: str, workflow_config: dict, config_file: Path, _output_dir: Path, all_analyses: dict) -> None:
     """
     Run joint calibration by combining all observables from specified analyses.
     TO DO: not tested; not finished
@@ -84,105 +86,111 @@ def should_verify_prior(workflow_config: dict) -> bool:
     """Decide whether to verify prior vs posterior based on workflow config."""
     return workflow_config.get('verify_prior_vs_posterior', False)
 
+def _multistep_prior_source(workflow_config, first, second, parameterization, output_dir, all_analyses):
+    """Resolve the source per parameterization before running or plotting stage B."""
+    source = workflow_config.get("prior_sources", {}).get(second)
+    if source is None:
+        source = workflow_config.get("prior_source", {})
+    source = deepcopy(source)
+    source_path = Path(source.get("posterior_file", "posterior.h5"))
+    if not source_path.is_absolute():
+        source_path = Path(output_dir) / f"{first}_{parameterization}" / source_path
+    source["posterior_file"] = str(source_path.resolve())
+    source.setdefault("method", "kde")
+    first_info = parameterization_info(all_analyses[first], parameterization)
+    second_info = parameterization_info(all_analyses[second], parameterization)
+    # A marginal cannot stand in for a conditional posterior when a previously
+    # sampled model parameter is fixed in stage B (or vice versa).
+    for name in set(first_info.full_names) & set(second_info.full_names):
+        first_fixed = first_info.fixed_parameters.get(name)
+        second_fixed = second_info.fixed_parameters.get(name)
+        if first_fixed != second_fixed:
+            message = f"Two-step inference requires the same fixed value/status for shared parameter '{name}'"
+            raise ValueError(message)
+    source.setdefault("parameter_names", second_info.sampled_names)
+    if not set(source["parameter_names"]).issubset(second_info.sampled_names):
+        message = "prior_source.parameter_names must be a subset of stage B sampled model parameters"
+        raise ValueError(message)
+    # Validate weights, columns, names and density fit before starting a sampler.
+    load_posterior_as_prior(source_path, source["method"], param_names=source["parameter_names"])
+    return source
+
+
 def _run_multistep_inference(workflow_name: str, workflow_config: dict, config_file: Path, output_dir: Path, all_analyses: dict) -> None:
+    """Use an existing stage A posterior as the prior for stage B.
+
+    Relative source paths are anchored at ``output_dir/<stage A>_<parameterization>``.
+    Multiple parameterizations receive separate workflow output subdirectories.
+    Stage A is produced by the standard analysis before this function is called.
     """
-    Run multistep inference where each step optionally uses posterior from the previous step.
-
-    Args:
-        all_analyses (dict): All analysis definitions from the 'analyses' section.
-    """
-
-    steps = workflow_config['steps']
-
-    # Check if the length of steps is not 2; currently only support two-step inference
-    if len(steps) != 2:
-        print("Error: The number of steps must be exactly 2. The current workflow doesn't support steps more than 2 ...")
-        sys.exit(1)
-
-    # Create an output directory for the full workflow
-    step_output_dir = Path(
-        output_dir,
-        workflow_name + "_" + "_".join(steps)
-    )
-    step_output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Loop over the steps in the multistep inference
-    for i, step_analysis_name in enumerate(steps):
-        analysis_name = step_analysis_name
-        # Config of a standard analysis corresponding to analysis_name
-        analysis_config = all_analyses[analysis_name]
-
-        logger.info("")
-        logger.info('------------------------------------------------------------------------')
-        logger.info(f"\nRunning step {i+1}/{len(steps)}: {analysis_name}")
-
-        # Verify previous posterior as prior in multistep inference by comparing sampled posterior vs loaded prior
-        if i == len(steps) - 2 and should_verify_prior(workflow_config):
-            for parameterization in analysis_config['parameterizations']:
-                verify_prior_vs_posterior(
-                    posterior_file=Path(output_dir) / f"{analysis_name}_{parameterization}" / "posterior.h5",
-                    method=workflow_config.get("prior_sources", {}).get(steps[-1], {}).get("method", "kde"),
-                    save_plot_to=step_output_dir / f"prior_vs_posterior_check_{parameterization}.pdf",
-                )
-
-        # Only execute the final step
-        if i < len(steps) - 1:
-            logger.info(f"Skipping step {analysis_name}: already completed via standard analyses.")
-            continue
-
-        # Update config if prior_source is specified
-        if isinstance(step_analysis_name, dict):
-            raise ValueError("Expected 'steps' to be a list of analysis names (strings), not dicts.")
-
-        if 'prior_source' in workflow_config:
-            logger.info(f"Using posterior from previous step as prior in {analysis_name}")
-            analysis_config = analysis_config.copy()
-            analysis_config['parameters'] = analysis_config['parameters'].copy()
-            analysis_config['parameters']['prior_source'] = workflow_config['prior_source']
-
-        for parameterization in analysis_config['parameterizations']:
-
-            # Override output folder for workflow
-            analysis_config['output_dir'] = step_output_dir
-
-            mcmc_config = mcmc.MCMCConfig(
-                analysis_name=analysis_name,
-                parameterization=parameterization,
-                analysis_config=analysis_config,
-                config_file=config_file,
-                # Reused inputs (read from base analysis repo): emulation.pkl, observables.h5 and posterior.h5 (when used as prior for the next step)
-                input_analysis_dir=Path(output_dir) / f"{analysis_name}_{parameterization}",
-                # New outputs (written to workflow repo): mcmc.h5, posterior.h5 (sampled from this run), mcmc_sampler.pkl
-                output_dir=step_output_dir
+    steps = workflow_config["steps"]
+    first, second = _validate_multistep_steps(steps, all_analyses)
+    target = all_analyses[second]
+    parameterizations = target["parameterizations"]
+    workflow_dir = Path(output_dir) / (workflow_name + "_" + "_".join(steps))
+    for parameterization in parameterizations:
+        if parameterization not in all_analyses[first]["parameterizations"]:
+            message = f"Missing stage A parameterization: {parameterization}"
+            raise ValueError(message)
+        source = _multistep_prior_source(
+            workflow_config, first, second, parameterization, output_dir, all_analyses
+        )
+        analysis_config = deepcopy(target)
+        parameter_config = analysis_config["parameterization"][parameterization]
+        prior = parameter_config.setdefault("prior", {})
+        if prior is None:
+            prior = parameter_config["prior"] = {}
+        prior["prior_source"] = source
+        step_output_dir = workflow_dir if len(parameterizations) == 1 else workflow_dir / parameterization
+        mcmc_config = mcmc.MCMCConfig(
+            analysis_name=second,
+            parameterization=parameterization,
+            analysis_config=analysis_config,
+            config_file=config_file,
+            input_analysis_dir=Path(output_dir) / f"{second}_{parameterization}",
+            output_dir=step_output_dir,
+        )
+        if mcmc_config.sequential_inference_config is not None:
+            message = "Two-step posterior priors cannot be combined with sequential_inference in stage B"
+            raise ValueError(message)
+        if not mcmc_config.observables_file.is_file():
+            raise FileNotFoundError(mcmc_config.observables_file)
+        step_output_dir.mkdir(parents=True, exist_ok=True)
+        if should_verify_prior(workflow_config):
+            verify_prior_vs_posterior(
+                posterior_file=source["posterior_file"], method=source["method"],
+                param_names=source["parameter_names"],
+                save_plot_to=step_output_dir / f"prior_vs_posterior_check_{parameterization}.pdf",
             )
+        if workflow_config.get("run_mcmc", True):
+            mcmc.run_mcmc(mcmc_config)
+        if workflow_config.get("run_closure_tests", False):
+            validation = analysis_config.get("validation_indices", [0, 0])
+            for idx in range(validation[1] - validation[0]):
+                closure_config = mcmc.MCMCConfig(
+                    analysis_name=second, parameterization=parameterization, analysis_config=deepcopy(analysis_config),
+                    config_file=config_file, closure_index=idx,
+                    input_analysis_dir=mcmc_config.input_analysis_dir, output_dir=step_output_dir,
+                )
+                mcmc.run_mcmc(closure_config, closure_index=idx)
+        _plot_multistep_results(workflow_config.get("plot", {}), mcmc_config)
 
-            # Run MCMC if enabled
-            if workflow_config.get("run_mcmc", True):
-                mcmc.run_mcmc(mcmc_config)
 
-            # Run closure tests if enabled
-            if workflow_config.get("run_closure_tests", False):
-                n_points = analysis_config.get('validation_indices', [0, 0])
-                for idx in range(n_points[1] - n_points[0]):
-                    closure_config = mcmc.MCMCConfig(
-                        analysis_name=analysis_name,
-                        parameterization=parameterization,
-                        analysis_config=analysis_config,
-                        config_file=config_file,
-                        closure_index=idx,
-                        input_analysis_dir=Path(output_dir) / f"{analysis_name}_{parameterization}",
-                        output_dir=step_output_dir
-                    )
-                    mcmc.run_mcmc(closure_config, closure_index=idx)
+def _validate_multistep_steps(steps, all_analyses):
+    if (not isinstance(steps, list) or len(steps) != 2
+            or any(not isinstance(step, str) for step in steps) or steps[0] == steps[1]):
+        message = "Two-step inference requires exactly two distinct analysis names (strings)"
+        raise ValueError(message)
+    first, second = steps
+    for name in steps:
+        if name not in all_analyses:
+            message = f"Unknown two-step analysis: {name}"
+            raise ValueError(message)
+    return first, second
 
-            assert mcmc_config.input_analysis_dir.exists(), "Input directory does not exist"
-            assert mcmc_config.observables_file.exists(), f"Missing observables.h5 in {mcmc_config.input_analysis_dir}"
 
-            # Run plotting if enabled
-            plot_flags = workflow_config.get("plot", {})
-            if plot_flags.get("mcmc", False):
-                plot_mcmc.plot(mcmc_config)
-            if plot_flags.get("qhat", False):
-                plot_qhat.plot(mcmc_config)
-            if plot_flags.get("closure_tests", False):
-                plot_closure.plot(mcmc_config)
+def _plot_multistep_results(flags, config):
+    # Optional plotting dependencies are needed only when a plot is requested.
+    for flag, module in (("mcmc", "plot_mcmc"), ("qhat", "plot_qhat"), ("closure_tests", "plot_closure")):
+        if flags.get(flag, False):
+            import_module(f"bayesian.{module}").plot(config)

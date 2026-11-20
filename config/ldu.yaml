@@ -274,7 +274,7 @@ analyses:
         n_burn_steps: 100
         n_sampling_steps: 500
         compute_evidence: True
-        evidence_method: "harmonic_mean"      # or "laplace" or "none"
+        evidence_method: "laplace"      # emcee approximation; use "native" for pocoMC or "none"
       closure:
         <<: *default_closure_parameters
     <<: *model_base
@@ -357,7 +357,7 @@ analyses:
   #       n_burn_steps: 100
   #       n_sampling_steps: 500
   #       compute_evidence: True
-  #       evidence_method: "harmonic_mean"      # or "laplace" or "none"
+  #       evidence_method: "laplace"      # emcee approximation; use "native" for pocoMC or "none"
   #     closure:
   #       <<: *default_closure_parameters
   #   <<: *model_base
@@ -413,7 +413,7 @@ inference_workflows:
   #       n_burn_steps: 100
   #       n_sampling_steps: 500
   #       compute_evidence: True
-  #       evidence_method: "harmonic_mean"      # or "laplace" or "none"
+  #       evidence_method: "laplace"      # emcee approximation; use "native" for pocoMC or "none"
   #     closure:
   #       <<: *default_closure_parameters
   #   <<: *model_base

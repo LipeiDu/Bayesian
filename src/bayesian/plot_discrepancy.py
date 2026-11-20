@@ -9,7 +9,10 @@ from matplotlib.lines import Line2D
 from bayesian import data_IO
 from bayesian.emulation import base
 from bayesian.model_discrepancy import build_discrepancy_covariance_matrix, build_observable_xcoords_per_group
-from bayesian.model_discrepancy import parse_discrepancy_group_settings, DiscrepancyKernelParams
+from bayesian.model_discrepancy import (parse_discrepancy_group_settings, discrepancy_parameter_indices,
+                                         discrepancy_parameters_from_values)
+from bayesian.parameterization import parameterization_info
+from bayesian.posterior_utils import flatten_chain_samples
 from bayesian.data_IO import data_array_from_h5, read_dict_from_h5
 
 sns.set_context('paper', rc={'font.size': 14, 'axes.titlesize': 14, 'axes.labelsize': 14})
@@ -25,14 +28,15 @@ def plot(config, n_posterior_samples=3, kernel_file="discrepancy_kernels.h5"):
     logger.info("[Discrepancy] Starting full discrepancy kernel generation and plotting.")
 
     # Load base data
-    experimental_results = data_IO.data_array_from_h5(
-        config.input_analysis_dir, 'observables.h5', pseudodata_index=-1, observable_filter=None
-    )
     emulation_config = base.EmulatorOrganizationConfig.from_config_file(
         analysis_name=config.analysis_name,
         parameterization=config.parameterization,
         analysis_config=config.analysis_config,
         config_file=config.config_file,
+    )
+    experimental_results = data_IO.data_array_from_h5(
+        config.input_analysis_dir, 'observables.h5', pseudodata_index=-1,
+        observable_filter=emulation_config.observable_filter
     )
     observable_xcoords = build_observable_xcoords_per_group(config, emulation_config, experimental_results)
 
@@ -43,12 +47,19 @@ def plot(config, n_posterior_samples=3, kernel_file="discrepancy_kernels.h5"):
 
     # Step 2: Load posterior and draw MAP + posterior samples
     mcmc_data = data_IO.read_dict_from_h5(config.output_dir, config.mcmc_outputfilename, verbose=True)
-    posterior = mcmc_data['chain'].reshape((-1, mcmc_data['chain'].shape[2]))
-    log_prob = mcmc_data['log_prob'].reshape(-1)
-    theta_map = posterior[np.argmax(log_prob)]
-    # log_and_verify_map_kernel(config, theta_map, observable_xcoords)
-
-    sample_idxs = np.random.choice(len(posterior), size=n_posterior_samples, replace=False)
+    posterior = flatten_chain_samples(mcmc_data['chain'])
+    log_target = np.asarray(mcmc_data['log_target']).reshape(-1)
+    theta_map = posterior[np.argmax(log_target)]
+    posterior_names = [name.decode() if isinstance(name, bytes) else str(name)
+                       for name in mcmc_data['parameter_names']]
+    weights = np.asarray(mcmc_data.get('weights', np.ones(len(posterior))), dtype=float).reshape(-1)
+    if (weights.shape != (len(posterior),) or not np.all(np.isfinite(weights))
+            or np.any(weights < 0) or weights.sum() <= 0):
+        message = "Invalid posterior weights for discrepancy plotting"
+        raise ValueError(message)
+    weights /= weights.sum()
+    rng = np.random.default_rng(getattr(config, 'random_seed', None))
+    sample_idxs = rng.choice(len(posterior), size=n_posterior_samples, replace=True, p=weights)
     theta_samples = [theta_map] + [posterior[i] for i in sample_idxs]
     sample_labels = ["MAP"] + [f"Posterior_{i}" for i in range(n_posterior_samples)]
 
@@ -58,7 +69,8 @@ def plot(config, n_posterior_samples=3, kernel_file="discrepancy_kernels.h5"):
         experimental_results,
         observable_xcoords,
         theta_samples=theta_samples,
-        sample_labels=sample_labels
+        sample_labels=sample_labels,
+        sampled_parameter_names=posterior_names
     )
 
     # Step 4: Merge fixed and sampled kernels from all groups
@@ -224,13 +236,8 @@ def generate_discrepancy_kernels_from_fixed_parameters(config, experimental_resu
             any_fixed = True
             x_coords = observable_xcoords[group]
             kernel_params = cfg["fixed_params"]
-            try:
-                cov_d = build_discrepancy_covariance_matrix(x_coords, cfg["kernel_type"], kernel_params)
-                cached_kernels[group] = [cov_d]
-                logger.info(f"[Discrepancy] Saving fixed kernel for group {group} with fixed parameters")
-            except Exception as e:
-                logger.warning(f"[Discrepancy] Error building fixed kernel for group '{group}': {e}")
-                cached_kernels[group] = [None]
+            cov_d = build_discrepancy_covariance_matrix(x_coords, cfg["kernel_type"], kernel_params)
+            cached_kernels[group] = [cov_d]
         else:
             logger.info(f"[Discrepancy] Skipping group '{group}' with fixed parameters — hyperparameters will be inferred.")
 
@@ -246,7 +253,8 @@ def generate_discrepancy_kernels_from_samples(
     experimental_results,
     observable_xcoords,
     theta_samples: list[np.ndarray],
-    sample_labels: list[str]
+    sample_labels: list[str],
+    sampled_parameter_names=None,
 ) -> tuple[dict[str, list[np.ndarray]], dict[str, dict[str, Any]], dict[str, np.ndarray], dict[str, np.ndarray]]:
     """
     Generate and return discrepancy kernels for each theta sample, per group.
@@ -260,27 +268,25 @@ def generate_discrepancy_kernels_from_samples(
         diag_exp_group, diag_emul_group
     ) = generate_common_discrepancy_inputs(config, experimental_results)
 
+    if sampled_parameter_names is not None:
+        param_names = list(sampled_parameter_names)
+    discrepancy_param_indices = discrepancy_parameter_indices(discrepancy_config, param_names)
     all_kernels = {g: [] for g in discrepancy_enabled_groups}
-    for theta in theta_samples:
-        theta = np.asarray(theta).reshape(1, -1)
+    for sample in theta_samples:
+        theta = np.asarray(sample)
+        if theta.shape != (len(param_names),):
+            message = "Discrepancy plot sample shape does not match parameter names"
+            raise ValueError(message)
         for group in discrepancy_enabled_groups:
             cfg = discrepancy_config[group]
             if not cfg["infer_hyperparameters"]:
                 continue
-            x_coords = observable_xcoords[group]
-            try:
-                theta_vals = theta[0, discrepancy_param_indices[group]]
-                kernel_params = DiscrepancyKernelParams(
-                    c_bar=theta_vals[0],
-                    length_scale=theta_vals[1],
-                    r=theta_vals[2],
-                    s=theta_vals[3] if len(theta_vals) > 3 else 0.0
-                )
-                cov_d = build_discrepancy_covariance_matrix(x_coords, cfg["kernel_type"], kernel_params)
-                all_kernels[group].append(cov_d)
-            except Exception as e:
-                logger.warning(f"[Discrepancy] Kernel generation failed for group {group}: {e}")
-                all_kernels[group].append(None)
+            kernel_params = discrepancy_parameters_from_values(
+                cfg["param_names"], theta[discrepancy_param_indices[group]]
+            )
+            all_kernels[group].append(build_discrepancy_covariance_matrix(
+                observable_xcoords[group], cfg["kernel_type"], kernel_params
+            ))
 
     return all_kernels, group_metadata, diag_emul_group, diag_exp_group
 
@@ -295,27 +301,15 @@ def generate_common_discrepancy_inputs(config, experimental_results):
         emulation_config, group_metadata,
         diag_exp_group, diag_emul_group
     """
-    param_cfg = config.analysis_config['parameterization'][config.parameterization]
-    names = param_cfg['names']
-    parameter_min = param_cfg['min']
-    parameter_max = param_cfg['max']
-    model_prior_config = param_cfg.get("prior", None)
-    emulator_groups = config.analysis_config['parameters']['emulators']
-
+    info = parameterization_info(config.analysis_config, config.parameterization)
+    model_prior = config.analysis_config['parameterization'][config.parameterization].get('prior')
     names, parameter_min, parameter_max, _, discrepancy_config, discrepancy_enabled_groups = parse_discrepancy_group_settings(
-        emulator_groups, names, parameter_min, parameter_max, model_prior_config
+        config.analysis_config['parameters']['emulators'], info.sampled_names, info.sampled_min, info.sampled_max,
+        info.filter_prior_config(model_prior)
     )
     param_names = names
-
-    discrepancy_param_indices = {
-        group: [i for i, name in enumerate(param_names) if name.startswith(f"{group}__")]
-        for group in discrepancy_config
-    }
-
-    model_param_indices = [
-        i for i, name in enumerate(param_names)
-        if not any(name.startswith(f"{g}__") for g in discrepancy_config)
-    ]
+    discrepancy_param_indices = discrepancy_parameter_indices(discrepancy_config, param_names)
+    model_param_indices = [param_names.index(name) for name in info.sampled_names]
 
     emulation_config = base.EmulatorOrganizationConfig.from_config_file(
         analysis_name=config.analysis_name,
@@ -329,7 +323,7 @@ def generate_common_discrepancy_inputs(config, experimental_results):
 
     # Emulator uncertainty is always evaluated at prior midpoint
     theta_mid = np.array([(lo + hi) / 2 for lo, hi in zip(parameter_min, parameter_max)])[None, :]
-    emulator_predictions = base.predict(theta_mid[:, model_param_indices], emulation_config)
+    emulator_predictions = base.predict(info.expand_sampled_to_full(theta_mid[:, model_param_indices]), emulation_config)
     diag_emul = np.diagonal(emulator_predictions['cov'][0])
 
     diag_exp_group = extract_groupwise_diagonals(diag_exp, group_metadata)
@@ -345,12 +339,13 @@ def generate_common_discrepancy_inputs(config, experimental_results):
 
 #---------------------------------------------------------------
 def get_group_metadata(emulation_config):
-    mapping_obj = base.SortEmulationGroupObservables.learn_mapping(emulation_config)
+    mapping_obj = emulation_config.sort_observables_in_matrix
     group_metadata = {}
-    for obs_name, (group, slc, _) in mapping_obj.emulation_group_to_observable_matrix.items():
+    for obs_name, (group, global_slc, local_slc) in mapping_obj.emulation_group_to_observable_matrix.items():
         if group not in group_metadata:
-            group_metadata[group] = {"observable_slices": [], "observable_labels": []}
-        group_metadata[group]["observable_slices"].append(slc)
+            group_metadata[group] = {"observable_slices": [], "global_slices": [], "observable_labels": []}
+        group_metadata[group]["observable_slices"].append(local_slc)
+        group_metadata[group]["global_slices"].append(global_slc)
         group_metadata[group]["observable_labels"].append(obs_name)
     return group_metadata
 
@@ -365,7 +360,7 @@ def get_emulator_uncertainty_at_midpoint(config, param_min, param_max, emulation
 def extract_groupwise_diagonals(diag_array, group_metadata):
     diag_group = {}
     for group, meta in group_metadata.items():
-        slices = meta['observable_slices']
+        slices = meta['global_slices']
         indices = [i for s in slices for i in range(s.start, s.stop)]
         diag_group[group] = diag_array[indices]
     return diag_group
@@ -375,55 +370,13 @@ def log_and_verify_map_kernel(config, theta_map, observable_xcoords):
     """
     Log MAP parameters and verify that kernel generated from MAP is stable across runs.
     """
-    from bayesian.model_discrepancy import (
-        build_discrepancy_covariance_matrix,
-        parse_discrepancy_group_settings,
-        DiscrepancyKernelParams
+    experimental = data_IO.data_array_from_h5(config.input_analysis_dir, 'observables.h5')
+    kernels, _, _, _ = generate_discrepancy_kernels_from_samples(
+        config, experimental, observable_xcoords, [np.asarray(theta_map)], ["MAP"]
     )
-
-    param_cfg = config.analysis_config['parameterization'][config.parameterization]
-    names = param_cfg['names']
-    parameter_min = param_cfg['min']
-    parameter_max = param_cfg['max']
-    model_prior_config = param_cfg.get("prior", None)
-    emulator_groups = config.analysis_config['parameters']['emulators']
-
-    names, _, _, _, discrepancy_config, discrepancy_enabled_groups = parse_discrepancy_group_settings(
-        emulator_groups, names, parameter_min, parameter_max, model_prior_config
-    )
-
-    param_names = names
-    discrepancy_param_indices = {
-        group: [i for i, name in enumerate(param_names) if name.startswith(f"{group}__")]
-        for group in discrepancy_config
-    }
-
-    print("="*60)
-    print("[Diagnostic] MAP parameter values used for discrepancy kernels:")
-    for i, name in enumerate(param_names):
-        print(f"  {name:40s} = {theta_map[i]:.6f}")
-    print("="*60)
-
-    for group in discrepancy_enabled_groups:
-        cfg = discrepancy_config[group]
-        if not cfg["infer_hyperparameters"]:
-            continue  # fixed kernels already handled
-
-        x_coords = observable_xcoords[group]
-        idxs = discrepancy_param_indices[group]
-        theta_vals = theta_map[idxs]
-
-        kernel_params = DiscrepancyKernelParams(
-            c_bar=theta_vals[0],
-            length_scale=theta_vals[1],
-            r=theta_vals[2],
-            s=theta_vals[3] if len(theta_vals) > 3 else 0.0
-        )
-
-        kernel = build_discrepancy_covariance_matrix(x_coords, cfg["kernel_type"], kernel_params)
-        diag = np.diagonal(kernel)
-
-        print(f"[{group}] Kernel diagonal (first 10 entries): {diag[:10]}")
+    for group, entries in kernels.items():
+        if entries:
+            logger.info("MAP discrepancy diagonal for %s: %s", group, np.diag(entries[0]))
 
 #---------------------------------------------------------------
 def save_discrepancy_kernels_h5(

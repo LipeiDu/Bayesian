@@ -16,7 +16,7 @@ from scipy.linalg import lapack
 
 from bayesian.emulation import base
 from bayesian import prior as prior_module
-from bayesian.model_discrepancy import add_discrepancy_covariance_all_groups
+from bayesian.model_discrepancy import add_discrepancy_covariance_all_groups, discrepancy_parameter_indices
 from bayesian.parameterization import ParameterizationInfo
 from bayesian import sequential_prior
 from bayesian.sequential_inference import SequentialInferenceConfig
@@ -76,29 +76,11 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     g_fixed_model_parameters = local_fixed_model_parameters
     g_sequential_inference_config = local_sequential_inference_config
 
-    # Identify prefixes used for discrepancy parameters
-    # Discrepancy parameters are named with prefix: {group}__{param}
-    discrepancy_prefixes = {
-        f"{group}__" for group, cfg in g_discrepancy_config.items() if cfg.get("infer_hyperparameters", False)
-    }
-
-    # Identify model parameters (those that do not start with any discrepancy prefix)
-    g_model_param_indices = [
-        i for i, name in enumerate(g_param_names)
-        if not any(name.startswith(prefix) for prefix in discrepancy_prefixes)
-    ]
-
-    # Identify discrepancy parameters by group, using sorted indices for consistency
-    g_discrepancy_param_indices = {}
-    for group, cfg in g_discrepancy_config.items():
-        if cfg.get("infer_hyperparameters", False):
-            prefix = f"{group}__"
-            indices = sorted(
-                i for i, name in enumerate(g_param_names) if name.startswith(prefix)
-            )
-            g_discrepancy_param_indices[group] = indices
-            if not indices:
-                logger.warning(f"Group '{group}' has 'infer=True' but no matching parameters with prefix '{prefix}'")
+    # Exact model and group-qualified names avoid prefix collisions and preserve
+    # configured hyperparameter meaning when YAML or sampled columns are reordered.
+    g_model_param_indices = [g_param_names.index(name) for name in g_full_model_param_names
+                             if name not in g_fixed_model_parameters]
+    g_discrepancy_param_indices = discrepancy_parameter_indices(g_discrepancy_config, g_param_names)
 
     # Build the prior function
     g_log_prior_fn = prior_module.make_log_prior_fn(g_prior_config, g_param_names)
@@ -112,8 +94,20 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
 
 #---------------------------------------------------------------
 def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDArray[np.float64]:
+    """Evaluate the bounded target, beta times the hard likelihood plus the active prior."""
+    X = np.atleast_2d(np.asarray(X, dtype=float))
+    values = log_likelihood(X, set_to_infinite_outside_bounds=set_to_infinite_outside_bounds)
+    inside = np.all((X > g_min) & (X < g_max), axis=1)
+    if np.any(inside):
+        power = g_sequential_inference_config.hard_likelihood_power if g_sequential_inference_config else 1.0
+        active_prior = g_sequential_log_prior_fn if g_sequential_log_prior_fn is not None else g_log_prior_fn
+        values[inside] = power * values[inside] + active_prior(X[inside])
+    return values
+
+
+def log_likelihood(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDArray[np.float64]:
     """
-    Function to evaluate the log-posterior for a given set of input parameters.
+    Evaluate the bounded hard log likelihood independently of the Bayesian prior.
 
     This function is called by https://emcee.readthedocs.io/en/stable/user/sampler/
 
@@ -126,17 +120,17 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
     """
 
     # Convert to 2darray of shape (n_samples, n_parameters)
-    X = np.array(X, copy=False, ndmin=2)
+    X = np.atleast_2d(np.asarray(X, dtype=float))
 
-    # Initialize log-posterior array, which we will populate and return
-    log_posterior = np.zeros(X.shape[0])
+    # Initialize the hard log likelihood array.
+    values = np.zeros(X.shape[0])
 
-    # Check if any samples are outside the parameter bounds, and set log-posterior to -inf for those
+    # Reject samples outside the parameter bounds.
     inside = np.all((X > g_min) & (X < g_max), axis=1)  # noqa: SIM300
     # -1e300 is apparently preferred for pocoMC
-    log_posterior[~inside] = -np.inf if set_to_infinite_outside_bounds else -1e300
+    values[~inside] = -np.inf if set_to_infinite_outside_bounds else -1e300
 
-    # Evaluate log-posterior for samples inside parameter bounds
+    # Evaluate the hard likelihood for samples inside the bounds.
     # n_samples: number of design points = number of training samples
     # n_features: total number of observables
     n_samples = np.count_nonzero(inside)
@@ -206,24 +200,11 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
             for i in range(n_samples):
                 covariance_matrix[i] += discrepancy_blocks[i]
 
-        # Compute log likelihood at each point in the sample
-        # We take constant priors, so the log-likelihood is just the log-posterior
-        # (since above we set the log-posterior to -inf for samples outside the parameter bounds)
-        hard_log_likelihood = np.asarray(list(map(_loglikelihood, dY, covariance_matrix)))
-        hard_likelihood_power = (
-            g_sequential_inference_config.hard_likelihood_power
-            if g_sequential_inference_config is not None
-            else 1.0
-        )
-        log_posterior[inside] += hard_likelihood_power * hard_log_likelihood
-
-        # Add prior term. In sequential mode this replaces the soft prior subspace with the learned soft posterior.
-        active_log_prior_fn = g_sequential_log_prior_fn if g_sequential_log_prior_fn is not None else g_log_prior_fn
-        log_posterior[inside] += active_log_prior_fn(X[inside])
+        values[inside] = np.asarray(list(map(_loglikelihood, dY, covariance_matrix)))
 
         # NOTE-STAT: We don't support the extra_std term here.
 
-    return log_posterior
+    return values
 
 #---------------------------------------------------------------
 def _loglikelihood(y, cov):
@@ -236,13 +217,27 @@ def _loglikelihood(y, cov):
     The likelihood is NOT NORMALIZED, since this does not affect MCMC.
     The normalization const = -n/2*log(2*pi), where n is the dimensionality.
 
-    Arguments `y` and `cov` MUST be np.arrays with dtype == float64 and shapes
-    (n) and (n, n), respectively.  These requirements are NOT CHECKED.
+    Arguments `y` and `cov` must have shapes (n,) and (n, n), respectively.
+    Both must be finite, and the covariance must be symmetric and positive definite.
+    Invalid shapes, nonfinite inputs, and asymmetry raise ValueError. A failed
+    Cholesky decomposition raises np.linalg.LinAlgError.
 
     The calculation follows algorithm 2.1 in Rasmussen and Williams (Gaussian
     Processes for Machine Learning).
 
     """
+    y = np.asarray(y, dtype=np.float64)
+    cov = np.asarray(cov, dtype=np.float64)
+    if y.ndim != 1 or cov.shape != (y.size, y.size):
+        msg = f"Expected residual shape (n,) and covariance shape (n, n), received {y.shape} and {cov.shape}."
+        raise ValueError(msg)
+    if not np.all(np.isfinite(y)) or not np.all(np.isfinite(cov)):
+        msg = "Residual and covariance must contain only finite values."
+        raise ValueError(msg)
+    if not np.allclose(cov, cov.T, rtol=1e-10, atol=1e-12):
+        msg = "Covariance must be symmetric."
+        raise ValueError(msg)
+
     # Compute the Cholesky decomposition of the covariance.
     # Use bare LAPACK function to avoid scipy.linalg wrapper overhead.
     L, info = lapack.dpotrf(cov, clean=False)
@@ -251,7 +246,7 @@ def _loglikelihood(y, cov):
         msg = 'lapack dpotrf error: '
         msg += f'the {-info}-th argument had an illegal value'
         raise ValueError(msg)
-    if info < 0:
+    if info > 0:
         msg = 'lapack dpotrf error: '
         msg += f'the leading minor of order {info} is not positive definite'
         raise np.linalg.LinAlgError(msg)
@@ -262,7 +257,6 @@ def _loglikelihood(y, cov):
     if info != 0:
         msg = 'lapack dpotrs error: '
         msg += f'the {-info}-th argument had an illegal value'
-        raise ValueError(
-        )
+        raise ValueError(msg)
 
     return -.5*np.dot(y, alpha) - np.log(L.diagonal()).sum()

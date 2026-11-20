@@ -28,7 +28,8 @@ from bayesian import common_base, data_IO, log_posterior
 from bayesian.emulation import base
 from bayesian.model_discrepancy import parse_discrepancy_group_settings, build_observable_xcoords_per_group
 from bayesian.parameterization import parameterization_info
-from bayesian.posterior_utils import decompose_target_density, uniform_bounds_to_loc_scale
+from bayesian.posterior_utils import (decompose_target_density, uniform_bounds_to_loc_scale,
+                                      weighted_quantile, shortest_interval, maximum_posterior_sample)
 from bayesian.sequential_export import export_hard_likelihood_samples
 from bayesian.sequential_inference import resolve_sequential_inference_config
 
@@ -55,6 +56,12 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
     # Load prior config if present (model parameters only)
     model_prior_config = config.analysis_config["parameterization"][config.parameterization].get("prior", None)
     model_prior_config = parameter_info.filter_prior_config(model_prior_config)
+    if model_prior_config and "prior_source" in model_prior_config and config.export_hard_likelihood_samples:
+        message = (
+            "Hard-likelihood CSV export requires factorized soft/coupling priors; "
+            "set export_hard_likelihood_samples: false for a correlated prior_source"
+        )
+        raise ValueError(message)
 
     # Gather discrepancy settings per observable group
     # Extend parameter lists with discrepancy hyperparameters: all model + discrepancy parameters
@@ -117,6 +124,10 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
             ndim,
             combined_prior_config,
             closure_index=closure_index,
+            discrepancy_config=discrepancy_config,
+            observable_xcoords=observable_xcoords,
+            names=names,
+            discrepancy_enabled_groups=discrepancy_enabled_groups,
         )
     else:
         msg = f"Invalid MCMC sampler: {config.mcmc_package}"
@@ -125,54 +136,76 @@ def run_mcmc(config: MCMCConfig, closure_index: int =-1) -> None:
 
 
 ####################################################################################################################
-def credible_interval(samples, confidence=0.9, interval_type='quantile'):
-    '''
-    Compute the credible interval for an array of samples.
-
-    TODO: one could also call the versions in pymc3 or arviz
-
-    :param 1darray samples: Array of samples
-    :param float confidence: Confidence level (default 0.9)
-    :param str type: Type of credible interval to compute. Options are:
-                        'hpd' - highest-posterior density
-                        'quantile' - quantile interval
-    '''
-
+def credible_interval(samples, confidence=0.9, interval_type='quantile', *, weights=None):
+    """Weighted equal-tail or shortest contiguous particle interval."""
+    if not np.isfinite(confidence) or not 0 < confidence <= 1:
+        message = "confidence must lie in (0, 1]"
+        raise ValueError(message)
+    if interval_type == 'quantile':
+        return weighted_quantile(samples, [(1-confidence)/2, (1+confidence)/2], weights)
     if interval_type == 'hpd':
-        # number of intervals to compute
-        nci = int((1 - confidence)*samples.size)
-        # find highest posterior density (HPD) credible interval i.e. the one with minimum width
-        argp = np.argpartition(samples, [nci, samples.size - nci])
-        cil = np.sort(samples[argp[:nci]])   # interval lows
-        cih = np.sort(samples[argp[-nci:]])  # interval highs
-        ihpd = np.argmin(cih - cil)
-        ci = cil[ihpd], cih[ihpd]
+        return shortest_interval(samples, confidence, weights)
+    message = f"Unknown interval type: {interval_type}"
+    raise ValueError(message)
 
-    elif interval_type == 'quantile':
-        cred_range = [(1-confidence)/2, 1-(1-confidence)/2]
-        ci = np.quantile(samples, cred_range)
 
-    return ci
+def representative_parameters(posterior, *, weights=None):
+    """Coordinate-wise posterior medians; this point need not be a joint mode."""
+    posterior = np.atleast_2d(posterior)
+    return np.array([weighted_quantile(column, 0.5, weights) for column in posterior.T])
 
-####################################################################################################################
-def map_parameters(posterior, method='quantile'):
-    '''
-    Compute the MAP parameters
 
-    :param 1darray posterior: Array of samples
-    :param str method: Method used to compute MAP. Options are:
-                        'quantile' - take a narrow quantile interval and compute mean of parameters in that interval
-    :return 1darray map_parameters: Array of MAP parameters
-    '''
-
+def map_parameters(posterior, method='quantile', *, weights=None, log_target=None):
+    """Legacy median-summary API; method='map' selects a saved joint target maximum."""
     if method == 'quantile':
-        central_quantile = 0.01
-        lower_bounds = np.quantile(posterior, 0.5-central_quantile/2, axis=0)
-        upper_bounds = np.quantile(posterior, 0.5+central_quantile/2, axis=0)
-        mask = (posterior >= lower_bounds) & (posterior <= upper_bounds)
-        map_parameters = np.array([posterior[mask[:,i],i].mean() for i in range(posterior.shape[1])])
+        return representative_parameters(posterior, weights=weights)
+    if method == 'map' and log_target is not None:
+        return maximum_posterior_sample(posterior, log_target)
+    message = "method must be 'quantile', or 'map' with explicit log_target values"
+    raise ValueError(message)
 
-    return map_parameters
+
+def _evidence_outputs(config, sampler, sampler_type, prior_config, lower, upper, experimental_results):
+    if not config.compute_evidence:
+        return {}
+    from bayesian.evidence import evidence_record
+
+    try:
+        record = evidence_record(
+            sampler, sampler_type, config.evidence_method, lower=lower, upper=upper,
+            prior_config=prior_config, n_observables=len(experimental_results['y']),
+            log_target_fn=log_posterior.log_posterior, sequential_config=config.sequential_inference_config,
+        )
+    except (ValueError, np.linalg.LinAlgError) as error:
+        logger.warning("Evidence unavailable: %s", error)
+        record = {"status": "unavailable", "reason": str(error), "requested_method": config.evidence_method or "default"}
+    result = {"evidence": record}
+    if "logZ" in record:
+        result.update(logZ=record["logZ"], logZ_err=record["logZ_err"])
+    return result
+
+
+def _draw_prior_start(prior, size, lower, upper, rng, *, seeded):
+    """Reject unbounded posterior-prior draws outside the sampler's hard box."""
+    lower, upper = np.asarray(lower), np.asarray(upper)
+
+    def draw(count):
+        points = prior.sample(size=count, random_state=rng) if seeded else prior.sample(size=count)
+        points = np.asarray(points)
+        if points.shape != (count, len(lower)):
+            message = f"Prior draws have shape {points.shape}; expected {(count, len(lower))}"
+            raise ValueError(message)
+        return points
+
+    points = draw(size)
+    for _ in range(100):
+        valid = (np.all(np.isfinite(points), axis=1) & np.all(points > lower, axis=1)
+                 & np.all(points < upper, axis=1))
+        if valid.all():
+            return points
+        points[~valid] = draw(np.count_nonzero(~valid))
+    message = "Could not initialize walkers from the prior inside the hard parameter bounds"
+    raise ValueError(message)
 
 
 def _run_using_emcee(
@@ -222,17 +255,19 @@ def _run_using_emcee(
     n_processes = os.environ.get("SLURM_CPUS_PER_TASK", 4)  # fallback default
     n_processes = int(n_processes)
 
+    initargs = [
+        parameter_min, parameter_max, emulation_config, emulation_results,
+        experimental_results, emulator_cov_unexplained, prior_config,
+        discrepancy_config, observable_xcoords, names, discrepancy_enabled_groups,
+        parameter_info.full_names, parameter_info.fixed_parameters,
+        config.sequential_inference_config,
+    ]
+    log_posterior.initialize_pool_variables(*initargs)
     ctx = multiprocessing.get_context('spawn')
     with ctx.Pool(
         processes=n_processes,
         initializer=log_posterior.initialize_pool_variables,
-        initargs=[
-            parameter_min, parameter_max, emulation_config, emulation_results,
-            experimental_results, emulator_cov_unexplained, prior_config,
-            discrepancy_config, observable_xcoords, names, discrepancy_enabled_groups,
-            parameter_info.full_names, parameter_info.fixed_parameters,
-            config.sequential_inference_config,
-        ]) as pool:
+        initargs=initargs) as pool:
 
         # Construct sampler (we create a dummy daughter class from emcee.EnsembleSampler, to add some logging info)
         # Note: we pass the emulators and experimental data as args to the log_posterior function
@@ -243,7 +278,10 @@ def _run_using_emcee(
                                          pool=pool)
 
         # Generate random starting positions for each walker
-        rng = np.random.default_rng()
+        random_seed = getattr(config, "random_seed", None)
+        rng = np.random.default_rng(random_seed)
+        if random_seed is not None:
+            sampler.random_state = np.random.RandomState(random_seed).get_state()
         active_start_prior = (
             log_posterior.g_sequential_log_prior_fn
             if log_posterior.g_sequential_log_prior_fn is not None
@@ -253,7 +291,11 @@ def _run_using_emcee(
             # Sample starting points for the MCMC walkers from the non-trivial priors
             # speed up burn-in, make chains more accurate, and avoid "stuck walkers" when using nontrivial priors in multistep inference
             logger.info('Sampling initial walker positions from active prior...')
-            random_pos = active_start_prior.sample(size=config.n_walkers)
+            random_pos = _draw_prior_start(
+                active_start_prior, config.n_walkers, parameter_min, parameter_max, rng,
+                seeded=(log_posterior.g_sequential_log_prior_fn is not None
+                        or (prior_config is not None and "prior_source" in prior_config)),
+            )
         else:
             logger.info('Sampling initial walker positions uniformly between bounds...')
             random_pos = rng.uniform(parameter_min, parameter_max, (config.n_walkers, parameter_ndim))
@@ -272,7 +314,9 @@ def _run_using_emcee(
         # Reposition walkers to the most likely points in the chain, then run the second half of burn-in.
         # This significantly accelerates burn-in and helps prevent stuck walkers.
         logger.info('Resampling walker positions...')
-        X0 = sampler.flatchain[np.unique(sampler.flatlnprobability, return_index=True)[1][-config.n_walkers:]]
+        X0 = sampler.get_chain(flat=True)[
+            np.unique(sampler.get_log_prob(flat=True), return_index=True)[1][-config.n_walkers:]
+        ]
         sampler.reset()
         X0 = sampler.run_mcmc(X0, config.n_burn_steps - nburn0, n_logging_steps=config.n_logging_steps)[0]
         sampler.reset()
@@ -289,22 +333,20 @@ def _run_using_emcee(
         output_dict['chain'] = sampler.get_chain()
         output_dict['acceptance_fraction'] = sampler.acceptance_fraction
         output_dict['log_prob'] = sampler.get_log_prob()
+        posterior_samples = sampler.get_chain(flat=True)
+        components = _posterior_density_components(
+            posterior_samples, sampler.get_log_prob(flat=True), config.sequential_inference_config
+        )
+        output_dict.update({name: values.reshape(output_dict['log_prob'].shape) for name, values in components.items()})
         try:
             output_dict['autocorrelation_time'] = sampler.get_autocorr_time()
         except Exception as e:
             output_dict['autocorrelation_time'] = None
             logger.info(f"Could not compute autocorrelation time: {e!s}")
 
-        if config.compute_evidence:
-            import bayesian.evidence as evidence
-            logger.info("Computing Bayesian evidence...")
-            try:
-                logZ, logZ_err = evidence.compute_from_sampler(sampler, sampler_type="emcee", method=config.evidence_method)
-                output_dict['logZ'] = logZ
-                output_dict['logZ_err'] = logZ_err
-                logger.info(f"Computed logZ = {logZ:.4f} ± {logZ_err:.4f}")
-            except Exception as e:
-                logger.warning(f"Could not compute evidence: {e}")
+        evidence_fields = _evidence_outputs(config, sampler, "emcee", prior_config,
+                                             parameter_min, parameter_max, experimental_results)
+        output_dict.update(evidence_fields)
 
         # If closure test, save the design point parameters and experimental pseudodata
         if closure_index >= 0:
@@ -317,12 +359,13 @@ def _run_using_emcee(
         data_IO.write_dict_to_h5(output_dict, config.mcmc_output_dir, 'mcmc.h5', verbose=True)
 
         # Save posterior to posterior.h5
-        posterior_samples = sampler.get_chain(flat=True)
         posterior_dict = {
             "posterior_samples": posterior_samples,
             "log_prob": sampler.get_log_prob(flat=True),
             "parameter_names": np.array(names, dtype='S'),
         }
+        posterior_dict.update(components)
+        posterior_dict.update(evidence_fields)
         if config.sequential_inference_config is not None:
             posterior_dict["sequential_inference"] = config.sequential_inference_config.to_dict()
         data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
@@ -368,6 +411,27 @@ class LoggingEnsembleSampler(emcee.EnsembleSampler):
         return result
 
 
+def _posterior_density_components(samples, target, sequential_config):
+    """Separate the practical target into the Bayesian prior and hard likelihood."""
+    active_prior = (
+        log_posterior.g_sequential_log_prior_fn
+        if log_posterior.g_sequential_log_prior_fn is not None
+        else log_posterior.g_log_prior_fn
+    )
+    prior_values = active_prior(samples)
+    power = sequential_config.hard_likelihood_power if sequential_config is not None else 1.0
+    if power == 0.0:
+        hard_likelihood = log_posterior.log_likelihood(samples)
+    else:
+        hard_likelihood, target = decompose_target_density(target, prior_values, hard_likelihood_power=power)
+    return {
+        "log_target": np.asarray(target),
+        "log_likelihood_hard": hard_likelihood,
+        "log_likelihood_hard_tempered": power * hard_likelihood,
+        "log_prior_bayesian": prior_values,
+    }
+
+
 def _run_using_pocoMC(
     config: MCMCConfig,
     emulation_config: base.EmulatorOrganizationConfig,
@@ -380,6 +444,11 @@ def _run_using_pocoMC(
     prior_config: dict | None,
     closure_index: int,
     n_max_steps: int = -1,
+    *,
+    discrepancy_config: dict | None = None,
+    observable_xcoords: dict | None = None,
+    names: list[str] | None = None,
+    discrepancy_enabled_groups: list[str] | None = None,
 ) -> None:
     """ Run with pocoMC.
 
@@ -401,7 +470,7 @@ def _run_using_pocoMC(
 
     # Additional possible function parameters, but for now, we don't need to pass it in.
     # random_state (int or None): Initial random seed.
-    random_state = None
+    random_state = getattr(config, "random_seed", None)
     # pool (int): Number of processes to use for parallelization (default is ``pool=None``).
     #     If ``pool`` is an integer greater than 1, a ``multiprocessing`` pool is created with the specified number of processes.
     #pool = None
@@ -433,9 +502,11 @@ def _run_using_pocoMC(
     # NOTE: I create the pool here rather than using the built-in one because I need to initialize the log_posterior!
     ctx = multiprocessing.get_context('spawn')
     parameter_info = parameterization_info(config.analysis_config, config.parameterization)
+    if names is None:
+        names = parameter_info.sampled_names
     # pocoMC may evaluate the likelihood in the parent process in addition to worker
     # processes, so initialize the shared likelihood globals here as well.
-    log_posterior.initialize_pool_variables(
+    initargs = [
         parameter_min,
         parameter_max,
         emulation_config,
@@ -443,21 +514,19 @@ def _run_using_pocoMC(
         experimental_results,
         emulator_cov_unexplained,
         prior_config,
-        {},
-        {},
-        parameter_info.sampled_names,
-        [],
+        discrepancy_config or {},
+        observable_xcoords or {},
+        names,
+        discrepancy_enabled_groups or [],
         parameter_info.full_names,
         parameter_info.fixed_parameters,
         config.sequential_inference_config,
-    )
+    ]
+    log_posterior.initialize_pool_variables(*initargs)
     with ctx.Pool(
+        processes=int(os.environ.get("SLURM_CPUS_PER_TASK", 4)),
         initializer=log_posterior.initialize_pool_variables,
-        initargs=[
-            parameter_min, parameter_max, emulation_config, emulation_results, experimental_results, emulator_cov_unexplained,
-            prior_config, {}, {}, parameter_info.sampled_names, [], parameter_info.full_names, parameter_info.fixed_parameters,
-            config.sequential_inference_config,
-        ]) as pool:
+        initargs=initargs) as pool:
         logging.info('Starting pocoMC ...')
         sampler = pmc.Sampler(
             prior=prior,
@@ -484,48 +553,22 @@ def _run_using_pocoMC(
     # not the hard-sector likelihood alone.  Save the components explicitly so
     # downstream diagnostics do not have to infer their meaning from sampler-
     # specific field names.
-    active_log_prior_fn = (
-        log_posterior.g_sequential_log_prior_fn
-        if log_posterior.g_sequential_log_prior_fn is not None
-        else log_posterior.g_log_prior_fn
-    )
-    log_prior_bayesian = active_log_prior_fn(samples)
-    hard_likelihood_power = (
-        config.sequential_inference_config.hard_likelihood_power
-        if config.sequential_inference_config is not None
-        else 1.0
-    )
-    log_likelihood_hard, log_target = decompose_target_density(
-        logl,
-        log_prior_bayesian,
-        hard_likelihood_power=hard_likelihood_power,
-    )
-    log_likelihood_hard_tempered = hard_likelihood_power * log_likelihood_hard
+    components = _posterior_density_components(samples, logl, config.sequential_inference_config)
 
     output_dict = {
         'chain': samples,
         'weights': weights,
         'logl': logl,
         'logp': logp,
-        'log_target': log_target,
-        'log_likelihood_hard': log_likelihood_hard,
-        'log_likelihood_hard_tempered': log_likelihood_hard_tempered,
-        'log_prior_bayesian': log_prior_bayesian,
-        'parameter_names': np.array(parameter_info.sampled_names, dtype='S'),
+        'parameter_names': np.array(names, dtype='S'),
     }
+    output_dict.update(components)
     if config.sequential_inference_config is not None:
         output_dict['sequential_inference'] = config.sequential_inference_config.to_dict()
 
-    if config.compute_evidence:
-        import bayesian.evidence as evidence
-        logger.info("Computing Bayesian evidence...")
-        try:
-            logZ, logZ_err = evidence.compute_from_sampler(sampler, sampler_type="pocoMC", method=config.evidence_method)
-            output_dict['logZ'] = logZ
-            output_dict['logZ_err'] = logZ_err
-            logger.info(f"Computed logZ = {logZ:.4f} ± {logZ_err:.4f}")
-        except Exception as e:
-            logger.warning(f"Could not compute evidence: {e}")
+    evidence_fields = _evidence_outputs(config, sampler, "pocoMC", prior_config,
+                                         parameter_min, parameter_max, experimental_results)
+    output_dict.update(evidence_fields)
 
     # Save full MCMC state to mcmc.h5
     logger.info('Writing pocoMC MCMC state to mcmc.h5...')
@@ -533,18 +576,15 @@ def _run_using_pocoMC(
 
     # Save lightweight posterior samples
     logger.info('Writing posterior samples to posterior.h5...')
-    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
     posterior_dict = {
         "posterior_samples": samples,
         "weights": weights,
         "logl": logl,
         "logp": logp,
-        "log_target": log_target,
-        "log_likelihood_hard": log_likelihood_hard,
-        "log_likelihood_hard_tempered": log_likelihood_hard_tempered,
-        "log_prior_bayesian": log_prior_bayesian,
-        "parameter_names": np.array(parameter_info.sampled_names, dtype='S'),
+        "parameter_names": np.array(names, dtype='S'),
     }
+    posterior_dict.update(components)
+    posterior_dict.update(evidence_fields)
     if config.sequential_inference_config is not None:
         posterior_dict["sequential_inference"] = config.sequential_inference_config.to_dict()
     data_IO.write_dict_to_h5(posterior_dict, config.mcmc_output_dir, 'posterior.h5', verbose=True)
@@ -553,9 +593,9 @@ def _run_using_pocoMC(
         export_hard_likelihood_samples(
             config=config,
             parameter_info=parameter_info,
-            sampled_parameter_names=list(parameter_info.sampled_names),
+            sampled_parameter_names=list(names),
             posterior_samples=samples,
-            log_posterior_values=logl + logp,
+            log_posterior_values=logl,
             model_prior_config=config.analysis_config["parameterization"][config.parameterization].get("prior", None),
             combined_prior_config=prior_config,
             sample_weights=weights,
@@ -689,9 +729,10 @@ class MCMCConfig(common_base.CommonBase):
         self.n_burn_steps = mcmc_configuration['n_burn_steps']
         self.n_sampling_steps = mcmc_configuration['n_sampling_steps']
         self.n_logging_steps = mcmc_configuration['n_logging_steps']
+        self.random_seed = mcmc_configuration.get("random_seed", None)
 
         self.compute_evidence = mcmc_configuration.get("compute_evidence", False)
-        self.evidence_method = mcmc_configuration.get("evidence_method", "harmonic_mean")
+        self.evidence_method = mcmc_configuration.get("evidence_method")
         self.export_hard_likelihood_samples = mcmc_configuration.get("export_hard_likelihood_samples", False)
         self.hard_likelihood_outputfilename = mcmc_configuration.get(
             "hard_likelihood_outputfilename",

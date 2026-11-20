@@ -1,0 +1,120 @@
+# Native Bayesian configuration. Prepare its analytic inputs with examples.inference.prepare.
+output_dir: output/examples/discrepancy_inferred
+observable_table_dir: .
+observable_config_dir: .
+observables_filename: observables.h5
+initialize_observables: false
+preprocess_input_data: false
+fit_emulators: false
+run_mcmc: true
+run_closure_tests: false
+skip_inference_workflows: false
+plot:
+  input_data: false
+  emulators: false
+  mcmc: false
+  qhat: false
+  closure_tests: false
+  across_analyses: false
+  discrepancy: true
+example:
+  kind: discrepancy_inferred
+  data_seed: 418
+analyses:
+  demo:
+    parameterizations:
+    - exponential
+    parameterization:
+      exponential:
+        names:
+        - AlphaS
+        - nucleon_width
+        - normalization
+        min:
+        - -2.0
+        - -1.0
+        - 10.0
+        max:
+        - 2.0
+        - 3.0
+        - 20.0
+        fixed_parameters:
+          normalization: 14.0
+        prior:
+          type:
+          - gaussian
+          - gaussian
+          - uniform
+          mean:
+          - 0.1
+          - 0.8
+          - null
+          std:
+          - 0.5
+          - 0.4
+          - null
+    parameters:
+      mcmc:
+        mcmc_package: pocoMC
+        random_seed: 271828
+        n_walkers: 32
+        n_burn_steps: 250
+        n_sampling_steps: 600
+        n_logging_steps: 1000
+        compute_evidence: false
+        export_hard_likelihood_samples: false
+        pocoMC:
+          n_effective: 128
+          n_active: 64
+          draw_n_prior_samples: 256
+          n_total_samples: 1000
+          n_importance_samples_for_evidence: 0
+      emulators:
+        a:
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+          - hadron__pt_a
+          - hadron__pt_z
+          discrepancy:
+            enabled: true
+            kernel_type: kernel2
+            infer_hyperparameters: true
+            parameter_names:
+            - r
+            - c_bar
+            - length_scale
+            min:
+            - -1.2
+            - 0.08
+            - 0.2
+            max:
+            - 0.3
+            - 0.65
+            - 1.8
+            prior:
+              type:
+              - uniform
+              - gaussian
+              - uniform
+              mean:
+              - null
+              - 0.3
+              - null
+              std:
+              - null
+              - 0.18
+              - null
+        b:
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+          - hadron__pt_m
+          discrepancy:
+            enabled: true
+            kernel_type: kernel2
+            infer_hyperparameters: false
+            fixed_params:
+            - 0.08
+            - 0.4
+            - 0.0

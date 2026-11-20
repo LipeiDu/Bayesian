@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +18,13 @@ def beta_tag(beta: float) -> str:
     return f"{beta:.2f}".replace(".", "p")
 
 
-def build_tempered_config(base_config: dict[str, Any], *, beta: float) -> dict[str, Any]:
-    if not 0.0 < beta <= 1.0:
-        raise ValueError(f"Tempered run beta must lie in (0, 1], not {beta}.")
+def build_tempered_config(base_config: dict[str, Any], *, beta: float,
+                          source_config_file: Path | None = None,
+                          output_config_file: Path | None = None) -> dict[str, Any]:
+    if not 0.0 <= beta <= 1.0:
+        raise ValueError(f"Tempered run beta must lie in [0, 1], not {beta}.")
+    if (source_config_file is None) != (output_config_file is None):
+        raise ValueError("Provide both source and output config paths when rebasing artifact paths.")
     config = copy.deepcopy(base_config)
     config["output_dir"] = f"output/reduced_soft_hard_sequential_tempered_beta_{beta_tag(beta)}"
     config["initialize_observables"] = False
@@ -29,11 +34,19 @@ def build_tempered_config(base_config: dict[str, Any], *, beta: float) -> dict[s
     config["run_closure_tests"] = False
     config["plot"] = {key: False for key in config.get("plot", {})}
 
-    for analysis in config["analyses"].values():
+    for name, analysis in config["analyses"].items():
         sequential = analysis["parameters"]["mcmc"]["sequential_inference"]
         if not sequential.get("enabled", False):
             raise ValueError("Base config must enable sequential inference.")
         sequential["hard_likelihood_power"] = float(beta)
+        if source_config_file is not None:
+            original = base_config["analyses"][name]["parameters"]["mcmc"]["sequential_inference"]
+            model_path = Path(original["soft_density_model_file"])
+            if not model_path.is_absolute():
+                model_path = source_config_file.parent / model_path
+            sequential["soft_density_model_file"] = os.path.relpath(
+                model_path.resolve(), output_config_file.parent.resolve()
+            )
     return config
 
 
@@ -90,9 +103,10 @@ def main() -> None:
 
     commands: list[str] = []
     for beta in args.betas:
-        config = build_tempered_config(base_config, beta=beta)
         tag = beta_tag(beta)
         config_path = args.output_config_dir / f"reduced_soft_hard_sequential_beta_{tag}.yaml"
+        config = build_tempered_config(base_config, beta=beta, source_config_file=args.base_config,
+                                       output_config_file=config_path)
         config_path.write_text(yaml.safe_dump(config, sort_keys=False))
 
         destination_analysis_dir = (

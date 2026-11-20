@@ -1,0 +1,206 @@
+# Native Bayesian configuration. Prepare its analytic inputs with examples.inference.prepare.
+output_dir: output/examples/multistep_gaussian
+observable_table_dir: .
+observable_config_dir: .
+observables_filename: observables.h5
+initialize_observables: false
+preprocess_input_data: false
+fit_emulators: false
+run_mcmc: true
+run_closure_tests: false
+skip_inference_workflows: false
+plot:
+  input_data: false
+  emulators: false
+  mcmc: false
+  qhat: false
+  closure_tests: false
+  across_analyses: false
+  discrepancy: false
+example:
+  kind: multistep
+  data_seed: 418
+  datasets:
+    first:
+    - A
+    second:
+    - B
+    joint:
+    - A
+    - B
+analyses:
+  first:
+    parameterizations:
+    - exponential
+    parameterization:
+      exponential:
+        names:
+        - AlphaS
+        - nucleon_width
+        - normalization
+        min:
+        - -2.0
+        - -1.0
+        - 10.0
+        max:
+        - 2.0
+        - 3.0
+        - 20.0
+        fixed_parameters:
+          normalization: 14.0
+        prior:
+          type:
+          - gaussian
+          - gaussian
+          - uniform
+          mean:
+          - 0.1
+          - 0.8
+          - null
+          std:
+          - 0.5
+          - 0.4
+          - null
+    parameters:
+      mcmc:
+        mcmc_package: emcee
+        random_seed: 314159
+        n_walkers: 20
+        n_burn_steps: 120
+        n_sampling_steps: 400
+        n_logging_steps: 1000
+        compute_evidence: false
+        export_hard_likelihood_samples: false
+        pocoMC:
+          n_effective: 128
+          n_active: 64
+          draw_n_prior_samples: 256
+          n_total_samples: 1000
+          n_importance_samples_for_evidence: 0
+      emulators:
+        linear:
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+          - hadron__pt_
+  second:
+    parameterizations:
+    - exponential
+    parameterization:
+      exponential:
+        names:
+        - AlphaS
+        - nucleon_width
+        - normalization
+        min:
+        - -2.0
+        - -1.0
+        - 10.0
+        max:
+        - 2.0
+        - 3.0
+        - 20.0
+        fixed_parameters:
+          normalization: 14.0
+        prior:
+          type:
+          - gaussian
+          - gaussian
+          - uniform
+          mean:
+          - 0.1
+          - 0.8
+          - null
+          std:
+          - 0.5
+          - 0.4
+          - null
+    parameters:
+      mcmc:
+        mcmc_package: emcee
+        random_seed: 314159
+        n_walkers: 20
+        n_burn_steps: 120
+        n_sampling_steps: 400
+        n_logging_steps: 1000
+        compute_evidence: false
+        export_hard_likelihood_samples: false
+        pocoMC:
+          n_effective: 128
+          n_active: 64
+          draw_n_prior_samples: 256
+          n_total_samples: 1000
+          n_importance_samples_for_evidence: 0
+      emulators:
+        linear:
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+          - hadron__pt_
+  joint:
+    parameterizations:
+    - exponential
+    parameterization:
+      exponential:
+        names:
+        - AlphaS
+        - nucleon_width
+        - normalization
+        min:
+        - -2.0
+        - -1.0
+        - 10.0
+        max:
+        - 2.0
+        - 3.0
+        - 20.0
+        fixed_parameters:
+          normalization: 14.0
+        prior:
+          type:
+          - gaussian
+          - gaussian
+          - uniform
+          mean:
+          - 0.1
+          - 0.8
+          - null
+          std:
+          - 0.5
+          - 0.4
+          - null
+    parameters:
+      mcmc:
+        mcmc_package: emcee
+        random_seed: 314159
+        n_walkers: 20
+        n_burn_steps: 120
+        n_sampling_steps: 400
+        n_logging_steps: 1000
+        compute_evidence: false
+        export_hard_likelihood_samples: false
+        pocoMC:
+          n_effective: 128
+          n_active: 64
+          draw_n_prior_samples: 256
+          n_total_samples: 1000
+          n_importance_samples_for_evidence: 0
+      emulators:
+        linear:
+          emulator_name: sk_learn
+          n_pc: null
+          observable_list:
+          - hadron__pt_
+inference_workflows:
+  two_step:
+    type: multistep
+    steps:
+    - first
+    - second
+    prior_sources:
+      second:
+        posterior_file: posterior.h5
+        method: gaussian
+    run_mcmc: true
+    verify_prior_vs_posterior: true
+    run_closure_tests: false

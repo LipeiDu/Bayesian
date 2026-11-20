@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import logging
-import pickle
 from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 import numpy.typing as npt
+from scipy.special import expit
+from scipy.stats import truncnorm
 
 from bayesian import prior as prior_module
 from bayesian.sequential_flow_model import load_realnvp_2d_from_payload
 from bayesian.sequential_inference import (
     SequentialInferenceConfig,
     SoftDensityArtifactMetadata,
+    _load_artifact_payload,
     validate_soft_density_artifact_payload,
 )
 
@@ -73,6 +75,7 @@ def build_sequential_log_prior_fn(
         remaining_indices=remaining_indices,
         sampled_parameter_names=sampled_parameter_names,
         remainder_log_prior_fn=remainder_log_prior_fn,
+        remainder_prior_config=remainder_prior_config,
         sampled_parameter_min=sampled_parameter_min,
         sampled_parameter_max=sampled_parameter_max,
     )
@@ -153,8 +156,7 @@ def _load_kde_soft_density_model(
 ) -> Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]]:
     model_file = sequential_config.soft_density_model_file
 
-    with model_file.open("rb") as stream:
-        payload = pickle.load(stream)
+    payload = _load_artifact_payload(model_file=model_file, model_type="gaussian_kde")
 
     metadata = _validate_loaded_artifact(
         payload=payload,
@@ -164,14 +166,20 @@ def _load_kde_soft_density_model(
     kde = payload["kde"]
 
     def _log_density(samples_phi: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-        samples_phi = np.array(samples_phi, dtype=float, ndmin=2)
-        unit = _to_unit_box(samples_phi, ranges)
+        samples_phi, inside = _soft_density_inputs(samples_phi, ranges)
+        values = np.full(len(samples_phi), -np.inf)
+        if not np.any(inside):
+            return values
+        unit = _to_unit_box(samples_phi[inside], ranges)
         z = _logit(unit)
         log_density_z = kde.logpdf(z.T)
         jac = np.sum(-np.log(ranges[:, 1] - ranges[:, 0]) - np.log(unit) - np.log1p(-unit), axis=1)
-        return np.asarray(log_density_z + jac, dtype=float)
+        values[inside] = log_density_z + jac
+        return values
 
-    _log_density.sample = lambda size: _sample_kde_soft_density(kde=kde, ranges=ranges, size=size)
+    _log_density.sample = lambda size, random_state=None: _sample_kde_soft_density(
+        kde=kde, ranges=ranges, size=size, random_state=random_state
+    )
     return _log_density
 
 
@@ -187,11 +195,7 @@ def _load_flow_soft_density_model(
             "Sequential flow prior support requires PyTorch in the Bayesian environment."
         ) from exc
 
-    torch.set_num_threads(1)
-    if hasattr(torch, "set_num_interop_threads"):
-        torch.set_num_interop_threads(1)
-
-    payload = torch.load(model_file, map_location="cpu")
+    payload = _load_artifact_payload(model_file=model_file, model_type="torch_realnvp_2d")
     metadata = _validate_loaded_artifact(
         payload=payload,
         sequential_config=sequential_config,
@@ -204,8 +208,11 @@ def _load_flow_soft_density_model(
     z_std = np.asarray(payload.get("z_std", [1.0, 1.0]), dtype=float)
 
     def _log_density(samples_phi: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-        samples_phi = np.array(samples_phi, dtype=float, ndmin=2)
-        unit = _to_unit_box(samples_phi, ranges)
+        samples_phi, inside = _soft_density_inputs(samples_phi, ranges)
+        values = np.full(len(samples_phi), -np.inf)
+        if not np.any(inside):
+            return values
+        unit = _to_unit_box(samples_phi[inside], ranges)
         z = _logit(unit)
         if standardize:
             x = (z - z_mean) / z_std
@@ -217,15 +224,17 @@ def _load_flow_soft_density_model(
         with torch.no_grad():
             log_prob_x = model.log_prob(tensor_x).cpu().numpy()
         jac = np.sum(-np.log(ranges[:, 1] - ranges[:, 0]) - np.log(unit) - np.log1p(-unit), axis=1)
-        return np.asarray(log_prob_x + log_det_standardize + jac, dtype=float)
+        values[inside] = log_prob_x + log_det_standardize + jac
+        return values
 
-    _log_density.sample = lambda size: _sample_flow_soft_density(
+    _log_density.sample = lambda size, random_state=None: _sample_flow_soft_density(
         model=model,
         ranges=ranges,
         standardize=standardize,
         z_mean=z_mean,
         z_std=z_std,
         n_samples=size,
+        random_state=random_state,
     )
     return _log_density
 
@@ -252,6 +261,14 @@ def _validate_loaded_artifact(
     return metadata
 
 
+def _soft_density_inputs(samples, ranges):
+    samples = np.atleast_2d(np.asarray(samples, dtype=float))
+    if samples.ndim != 2 or samples.shape[1] != len(ranges):
+        raise ValueError(f"Soft density expects shape (n, {len(ranges)}), received {samples.shape}.")
+    inside = np.all(np.isfinite(samples) & (samples > ranges[:, 0]) & (samples < ranges[:, 1]), axis=1)
+    return samples, inside
+
+
 def _logit(x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     clipped = np.clip(x, 1.0e-10, 1.0 - 1.0e-10)
     return np.log(clipped) - np.log1p(-clipped)
@@ -268,7 +285,7 @@ def _to_unit_box(
 
 
 def _inverse_logit(x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    return 1.0 / (1.0 + np.exp(-x))
+    return expit(x)
 
 
 def _from_unit_box(
@@ -277,7 +294,8 @@ def _from_unit_box(
 ) -> npt.NDArray[np.float64]:
     lo = bounds[:, 0]
     hi = bounds[:, 1]
-    return lo + unit * (hi - lo)
+    physical = lo + unit * (hi - lo)
+    return np.clip(physical, np.nextafter(lo, hi), np.nextafter(hi, lo))
 
 
 def _sample_kde_soft_density(
@@ -285,8 +303,10 @@ def _sample_kde_soft_density(
     kde: Any,
     ranges: npt.NDArray[np.float64],
     size: int,
+    random_state=None,
 ) -> npt.NDArray[np.float64]:
-    z = np.asarray(kde.resample(size=size).T, dtype=float)
+    rng = np.random.default_rng(random_state)
+    z = np.asarray(kde.resample(size=size, seed=rng).T, dtype=float)
     unit = _inverse_logit(z)
     return _from_unit_box(unit, ranges)
 
@@ -299,17 +319,43 @@ def _sample_flow_soft_density(
     z_mean: npt.NDArray[np.float64],
     z_std: npt.NDArray[np.float64],
     n_samples: int,
+    random_state=None,
 ) -> npt.NDArray[np.float64]:
     import torch
 
+    rng = np.random.default_rng(random_state)
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(rng.integers(0, np.iinfo(np.int64).max)))
     with torch.no_grad():
-        sampled_x = model.sample(n_samples).cpu().numpy()
+        sampled_x = model.sample(n_samples, generator=generator).cpu().numpy()
     if standardize:
         z = sampled_x * z_std + z_mean
     else:
         z = sampled_x
     unit = _inverse_logit(z)
     return _from_unit_box(unit, ranges)
+
+
+def _sample_manual_prior(prior_config, lower_bounds, upper_bounds, size, rng):
+    manual = prior_config or {}
+    kinds = manual.get("type", ["uniform"] * len(lower_bounds))
+    samples = np.empty((size, len(lower_bounds)))
+    for column, (lower, upper, kind) in enumerate(zip(lower_bounds, upper_bounds, kinds, strict=True)):
+        if kind == "uniform":
+            draws = rng.uniform(lower, upper, size)
+        elif kind == "gaussian":
+            mean = manual["mean"][column]
+            std = manual["std"][column]
+            draws = truncnorm((lower - mean) / std, (upper - mean) / std,
+                              loc=mean, scale=std).rvs(size, random_state=rng)
+        elif kind == "log":
+            if lower <= 0.0:
+                raise ValueError("Log-prior sampling requires positive bounds.")
+            draws = np.exp(rng.uniform(np.log(lower), np.log(upper), size))
+        else:
+            raise NotImplementedError(f"Cannot sample prior type '{kind}'.")
+        samples[:, column] = draws
+    return samples
 
 
 def _build_sequential_prior_sampler(
@@ -319,6 +365,7 @@ def _build_sequential_prior_sampler(
     remaining_indices: list[int],
     sampled_parameter_names: list[str],
     remainder_log_prior_fn: Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
+    remainder_prior_config: dict[str, Any] | None,
     sampled_parameter_min: list[float] | npt.NDArray[np.float64] | None,
     sampled_parameter_max: list[float] | npt.NDArray[np.float64] | None,
 ) -> Callable[[int], npt.NDArray[np.float64]] | None:
@@ -332,9 +379,10 @@ def _build_sequential_prior_sampler(
     ):
         return None
 
-    def _sample(size: int) -> npt.NDArray[np.float64]:
+    def _sample(size: int, random_state=None) -> npt.NDArray[np.float64]:
+        rng = np.random.default_rng(random_state)
         X = np.zeros((size, len(sampled_parameter_names)), dtype=float)
-        soft_samples = np.asarray(soft_sampler(size), dtype=float)
+        soft_samples = np.asarray(soft_sampler(size, random_state=rng), dtype=float)
         if soft_samples.ndim == 1:
             soft_samples = soft_samples.reshape(size, 1)
         X[:, soft_indices] = soft_samples
@@ -345,10 +393,9 @@ def _build_sequential_prior_sampler(
                 if remainder_samples.shape[0] != size and remainder_samples.shape[1] == size:
                     remainder_samples = remainder_samples.T
             else:
-                rng = np.random.default_rng()
                 bounds_min = np.asarray(sampled_parameter_min, dtype=float)[remaining_indices]
                 bounds_max = np.asarray(sampled_parameter_max, dtype=float)[remaining_indices]
-                remainder_samples = rng.uniform(bounds_min, bounds_max, size=(size, len(remaining_indices)))
+                remainder_samples = _sample_manual_prior(remainder_prior_config, bounds_min, bounds_max, size, rng)
             X[:, remaining_indices] = remainder_samples
         return X
 

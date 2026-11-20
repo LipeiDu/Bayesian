@@ -248,8 +248,9 @@ def predict_emulation_group(parameters, results, emulation_group_config, emulato
 
     # Include predictive variance due to truncated PCs.
     # See comments in mcmc.py for further details.
-    for i_sample in range(n_samples):
-        emulator_cov_reconstructed_scaled[i_sample] += emulator_group_cov_unexplained / n_samples
+    # PCA explained_variance_ already estimates the training covariance.
+    # Every predicted point receives the same truncation covariance.
+    emulator_cov_reconstructed_scaled += emulator_group_cov_unexplained
 
     # Propagate uncertainty: inverse preprocessing
     # We only need to undo the unit variance scaling, since the shift does not affect the covariance matrix.
@@ -677,29 +678,23 @@ class SortEmulationGroupObservables:
             # Setup
             value_type = "cov"
 
-            # We have to sort them according to the mapping that we've derived.
-            # However, it's not quite as trivial to just insert them (as we do for the central values),
-            # so we'll use the output matrix slice as the key to sort by below.
-            inputs_for_block_diag = {}
-            for observable_name, (emulation_group_name, slice_in_output_matrix, slice_in_emulation_group_matrix) in self.emulation_group_to_observable_matrix.items():  # noqa: B007
-                emulation_group_matrix = group_matrices[emulation_group_name]
-                # NOTE: The slice_in_output_matrix.start should provide unique integers to sort by
-                #       (basically, we just use the starting position instead of inserting it directly).
-                inputs_for_block_diag[slice_in_output_matrix.start] = emulation_group_matrix[value_type][:, slice_in_emulation_group_matrix, slice_in_emulation_group_matrix]
+            # Assemble each group's full covariance so correlations between its
+            # observables survive reordering, including interleaved groups.
+            indices_per_group: dict[str, tuple[list[int], list[int]]] = {}
+            for group_name, output_slice, group_slice in self.emulation_group_to_observable_matrix.values():
+                output_indices, group_indices = indices_per_group.setdefault(group_name, ([], []))
+                output_indices.extend(range(output_slice.start, output_slice.stop))
+                group_indices.extend(range(group_slice.start, group_slice.stop))
 
-            # And then merge them together in a block diagonal, sorting to put them in the right order
-            output[value_type] = nd_block_diag(
-                # sort based on the start value of the slice in the output matrix.
-                [
-                    # NOTE: We don't want to pass the key, but we need it for sorting, so we then
-                    #       have to explicitly select the actual matrices (ie. the v of the k, v pair)
-                    #       to pass along.
-                    m[1]
-                    for m in sorted(
-                        inputs_for_block_diag.items(), key=lambda x: x[0]
-                    )
-                ]
-            )
+            n_samples = group_matrices[next(iter(indices_per_group))][value_type].shape[0]
+            output[value_type] = np.zeros((n_samples, self.shape[1], self.shape[1]))
+            for group_name, (output_indices, group_indices) in indices_per_group.items():
+                destination = np.asarray(output_indices)
+                source = np.asarray(group_indices)
+                group_covariance = group_matrices[group_name][value_type]
+                output[value_type][:, destination[:, np.newaxis], destination] = (
+                    group_covariance[:, source[:, np.newaxis], source]
+                )
 
         # Handle the other values (as of 14 August 2023, it's just "central_value")
         for value_type in self._available_value_types:
@@ -757,15 +752,17 @@ def compute_emulator_group_cov_unexplained(emulation_group_config, emulation_gro
     '''
     Compute the predictive variance due to PC truncation, for a given emulator group.
     We can do this by decomposing the original covariance in feature space:
-      C_Y = S D^2 S^T
-          = S_{<=n_pc} D^2_{<=n_pc} S_{<=n_pc}^T + S_{>n_pc} D^2_{>n_pc} S_{>n_pc}^T
+      C_Y = S D S^T
+          = S_{<=n_pc} D_{<=n_pc} S_{<=n_pc}^T + S_{>n_pc} D_{>n_pc} S_{>n_pc}^T
     In general, we want to estimate the covariance as a function of theta.
     We can do this for the first term by estimating it with the emulator covariance constructed above,
       as a function of theta.
     We can't do this with the second term, since we didn't emulate it -- so we estimate it,
       treating it as independent of theta, and add it to the emulator covariance:
-        Sigma_unexplained = 1/n_samples * S_{>n_pc} D^2_{>n_pc} S_{>n_pc}^T,
-      where we will include the 1/n_samples factor to account for the fact that we are estimating the covariance from a set of samples.
+        Sigma_unexplained = S_{>n_pc} D_{>n_pc} S_{>n_pc}^T,
+      where D contains PCA explained_variance_, the training sample covariance
+      eigenvalues. Its normalization is already included by PCA. This covariance
+      is independent of the number of prediction points in a batch.
     See eqs 21-22 of https://arxiv.org/pdf/2102.11337.pdf
     TODO: double check this (and compare to https://github.com/jdmulligan/STAT/blob/master/src/emulator.py#L145)
 

@@ -181,19 +181,14 @@ def validate_soft_density_artifact_payload(
             f"Soft density model columns {payload_columns} do not match expected sequential soft parameters {expected_columns}."
         )
 
-    required_keys = {"columns", "prior_ranges", "transform"}
-    if payload_model_type == "gaussian_kde":
-        required_keys.update({"kde"})
-    elif payload_model_type == "torch_realnvp_2d":
-        required_keys.update({"architecture", "state_dict"})
+    model_keys = {"gaussian_kde": {"kde"}, "torch_realnvp_2d": {"architecture", "state_dict"}}
+    required_keys = {"columns", "prior_ranges", "transform"} | model_keys[payload_model_type]
     missing_keys = sorted(key for key in required_keys if key not in payload)
     if missing_keys:
         raise KeyError(
             f"Soft density artifact {model_file} is missing required keys for model_type '{payload_model_type}': {missing_keys}"
         )
 
-    if "prior_ranges" not in payload:
-        raise KeyError(f"Soft density artifact {model_file} is missing required key 'prior_ranges'.")
     ranges = np.asarray(payload["prior_ranges"], dtype=float)
     if ranges.shape != (len(expected_columns), 2):
         raise ValueError(
@@ -204,6 +199,11 @@ def validate_soft_density_artifact_payload(
         raise ValueError(f"Soft density artifact {model_file} contains non-finite prior_ranges values.")
     if np.any(ranges[:, 1] <= ranges[:, 0]):
         raise ValueError(f"Soft density artifact {model_file} has invalid prior_ranges with upper <= lower.")
+
+    if payload["transform"] not in {"logit_box", "bounded_logit"}:
+        raise ValueError(f"Soft density artifact {model_file} has unsupported transform '{payload['transform']}'.")
+    if payload_model_type == "torch_realnvp_2d":
+        _validate_flow_standardization(payload, len(expected_columns))
 
     return SoftDensityArtifactMetadata(
         model_file=model_file,
@@ -216,6 +216,18 @@ def validate_soft_density_artifact_payload(
         created_utc=payload.get("created_utc"),
         payload_keys=tuple(sorted(str(key) for key in payload.keys())),
     )
+
+
+def _validate_flow_standardization(payload, n_parameters):
+    if n_parameters != 2:
+        raise ValueError("RealNVP soft-density artifacts require two parameter columns.")
+    if not payload.get("standardize", False):
+        return
+    mean = np.asarray(payload.get("z_mean", [0.0, 0.0]), dtype=float)
+    std = np.asarray(payload.get("z_std", [1.0, 1.0]), dtype=float)
+    if (mean.shape != (2,) or std.shape != (2,) or not np.all(np.isfinite(mean))
+            or not np.all(np.isfinite(std)) or np.any(std <= 0.0)):
+        raise ValueError("Soft density artifact has invalid standardization parameters.")
 
 
 def _load_artifact_payload(*, model_file: Path, model_type: str) -> Any:
@@ -233,7 +245,7 @@ def _load_artifact_payload(*, model_file: Path, model_type: str) -> Any:
             raise ImportError(
                 "Sequential flow prior support requires PyTorch in the Bayesian environment."
             ) from exc
-        return torch.load(model_file, map_location="cpu")
+        return torch.load(model_file, map_location="cpu", weights_only=False)
 
     raise NotImplementedError(
         "Sequential inference currently supports only gaussian_kde and torch_realnvp_2d soft models, "

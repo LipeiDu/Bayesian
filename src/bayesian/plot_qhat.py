@@ -12,12 +12,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
 import seaborn as sns
-import pandas as pd
 
 from bayesian import data_IO, mcmc, plot_utils
 from bayesian.emulation import base
 from bayesian.parameterization import parameterization_info
-from bayesian.posterior_utils import flatten_chain_samples
+from bayesian.posterior_utils import (model_posterior_samples, select_posterior_samples, maximum_posterior_sample)
+from bayesian.prior import sample_prior
+from bayesian import sequential_prior
 
 sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize':18})
 
@@ -83,32 +84,23 @@ def plot(config):
     # Get results from file
     results = data_IO.read_dict_from_h5(config.output_dir, config.mcmc_outputfilename, verbose=True)
     parameter_info = parameterization_info(config.analysis_config, config.parameterization)
-    posterior = flatten_chain_samples(results['chain'])
-    if 'parameter_names' in results:
-        parameter_names = results['parameter_names'].astype(str).tolist()
-    else:
-        parameter_names = parameter_info.sampled_names
-        logger.warning('parameter_names not found in MCMC file. Falling back to config-defined names.')
-    posterior_df = pd.DataFrame(posterior, columns=parameter_names)
-    model_samples = parameter_info.expand_sampled_to_full(
-        posterior_df[parameter_info.sampled_names].to_numpy(),
-        sampled_names=parameter_info.sampled_names,
-    )
+    model_samples, weights = model_posterior_samples(results, parameter_info)
 
     # Plot output dir
     plot_dir = Path(config.output_dir) / 'plot_qhat'
     plot_dir.mkdir(parents=True, exist_ok=True)
 
     # qhat plots
-    plot_qhat(model_samples, plot_dir, config, E=100, cred_level=0.9, n_samples=1000)
-    plot_qhat(model_samples, plot_dir, config, T=0.3, cred_level=0.9, n_samples=1000)
+    plot_qhat(model_samples, plot_dir, config, E=100, cred_level=0.9, n_samples=1000, weights=weights)
+    plot_qhat(model_samples, plot_dir, config, T=0.3, cred_level=0.9, n_samples=1000, weights=weights)
 
     # Observable sensitivity plots
-    _plot_observable_sensitivity(model_samples, plot_dir, config, delta=0.1, n_samples=1000)
+    _plot_observable_sensitivity(model_samples, plot_dir, config, delta=0.1, n_samples=1000, weights=weights)
 
 #---------------------------------------------------------------[]
-def plot_qhat(posterior, plot_dir, config, E=0, T=0, cred_level=0., n_samples=5000, n_x=50,
-              plot_prior=True, plot_mean=True, plot_map=False, target_design_point: npt.NDArray[np.int64] | None = None):
+def plot_qhat(posterior, plot_dir, config, E=0, T=0, cred_level=0.9, n_samples=5000, n_x=50,
+              plot_prior=True, plot_mean=True, plot_map=False, target_design_point: npt.NDArray[np.int64] | None = None,
+              weights=None, log_target=None):
     '''
     Plot qhat credible interval from posterior samples,
     as a function of either E or T (with the other held fixed)
@@ -125,46 +117,37 @@ def plot_qhat(posterior, plot_dir, config, E=0, T=0, cred_level=0., n_samples=50
     if target_design_point is None:
         target_design_point = np.array([])
 
-    # Sample posterior parameters without replacement
-    if posterior.shape[0] < n_samples:
-        n_samples = posterior.shape[0]
-        logger.warning(f'Not enough posterior samples to plot {n_samples} samples, using {n_samples} instead')
-    rng = np.random.default_rng()
-    idx = rng.choice(posterior.shape[0], size=n_samples, replace=False)
-    posterior_samples = posterior[idx,:]
+    map_point = maximum_posterior_sample(posterior, log_target) if plot_map else None
+    posterior_samples, sample_weights = select_posterior_samples(
+        posterior, weights, max_samples=n_samples, random_state=getattr(config, 'random_seed', None)
+    )
+    n_samples = len(posterior_samples)
 
-    # Compute qhat for each sample (as well as MAP value), as a function of T or E
-    #   qhat_posteriors will be a 2d array of shape (x_array.size, n_samples)
-    if E:
-        xlabel = 'T (GeV)'
-        suffix = f'E{E}'
-        label = f'E = {E} GeV'
-        x_array = np.linspace(0.16, 0.5, n_x)
-        qhat_posteriors = np.array([qhat_over_T_cubed(posterior_samples, config, T=T, E=E) for T in x_array])
-    elif T:
-        xlabel = 'E (GeV)'
-        suffix = f'T{T}'
-        label = f'T = {T} GeV'
-        x_array = np.linspace(5, 200, n_x)
-        qhat_posteriors = np.array([qhat_over_T_cubed(posterior_samples, config, T=T, E=E) for E in x_array])
+    if bool(E) == bool(T):
+        message = "Specify exactly one fixed E or T for a qhat curve"
+        raise ValueError(message)
+    xlabel, suffix, label = ("T (GeV)", f"E{E}", f"E = {E} GeV") if E else ("E (GeV)", f"T{T}", f"T = {T} GeV")
+    x_array = np.linspace(0.16, 0.5, n_x) if E else np.linspace(5, 200, n_x)
 
-    # Plot mean qhat values for each T or E
+    def evaluate(points):
+        return np.array([qhat_over_T_cubed(points, config, T=x if E else T, E=E if E else x) for x in x_array])
+
+    qhat_posteriors = evaluate(posterior_samples)
+
+    # Calculate the weighted mean even when its curve is hidden in a closure plot.
+    qhat_mean = qhat_posteriors @ sample_weights
     if plot_mean:
-        qhat_mean = np.mean(qhat_posteriors, axis=1)
         plt.plot(x_array, qhat_mean, sns.xkcd_rgb['denim blue'],
                 linewidth=2., linestyle='--', label='Mean')
 
     # Plot the MAP value as well for each T or E
     if plot_map:
-        if E:
-            qhat_map = np.array([qhat_over_T_cubed(mcmc.map_parameters(posterior_samples), config, T=T, E=E) for T in x_array])
-        elif T:
-            qhat_map = np.array([qhat_over_T_cubed(mcmc.map_parameters(posterior_samples), config, T=T, E=E) for E in x_array])
+        qhat_map = evaluate(map_point)
         plt.plot(x_array, qhat_map, sns.xkcd_rgb['medium green'],
-                linewidth=2., linestyle='--', label='MAP')
+                linewidth=2., linestyle='--', label='Highest-target saved sample')
 
     # Get credible interval for each T or E
-    h = [mcmc.credible_interval(qhat_values, confidence=cred_level) for qhat_values in qhat_posteriors]
+    h = [mcmc.credible_interval(qhat_values, confidence=cred_level, weights=sample_weights) for qhat_values in qhat_posteriors]
     credible_low = [i[0] for i in h]
     credible_up =  [i[1] for i in h]
     plt.fill_between(x_array, credible_low, credible_up, color=sns.xkcd_rgb['light blue'],
@@ -177,11 +160,7 @@ def plot_qhat(posterior, plot_dir, config, E=0, T=0, cred_level=0., n_samples=50
         # Generate samples
         prior_samples = _generate_prior_samples(config, n_samples=n_samples)
 
-        # Compute qhat for each sample, as a function of T or E
-        if E:
-            qhat_priors = np.array([qhat_over_T_cubed(prior_samples, config, T=T, E=E) for T in x_array])
-        elif T:
-            qhat_priors = np.array([qhat_over_T_cubed(prior_samples, config, T=T, E=E) for E in x_array])
+        qhat_priors = evaluate(prior_samples)
 
         # Get credible interval for each T or E
         h_prior = [mcmc.credible_interval(qhat_values, confidence=cred_level) for qhat_values in qhat_priors]
@@ -193,11 +172,8 @@ def plot_qhat(posterior, plot_dir, config, E=0, T=0, cred_level=0., n_samples=50
     # If closure test: Plot truth qhat value
     # We will return a dict of info needed for plotting closure plots, including a
     #   boolean array (as a fcn of T or E) of whether the truth value is contained within credible region
-    if target_design_point.any():
-        if E:
-            qhat_truth = [qhat_over_T_cubed(target_design_point, config, T=T, E=E) for T in x_array]
-        elif T:
-            qhat_truth = [qhat_over_T_cubed(target_design_point, config, T=T, E=E) for E in x_array]
+    if target_design_point.size:
+        qhat_truth = evaluate(target_design_point).reshape(-1)
         plt.plot(x_array, qhat_truth, sns.xkcd_rgb['pale red'],
                 linewidth=2., label='Target')
 
@@ -225,13 +201,13 @@ def plot_qhat(posterior, plot_dir, config, E=0, T=0, cred_level=0., n_samples=50
     plt.savefig(f'{plot_dir}/qhat_{suffix}.pdf')
     plt.close('all')
 
-    if target_design_point.any():
+    if target_design_point.size:
         return qhat_closure
 
 #---------------------------------------------------------------
-def _plot_observable_sensitivity(posterior, plot_dir, config, delta=0.1, n_samples=1000):
+def _plot_observable_sensitivity(posterior, plot_dir, config, delta=0.1, n_samples=1000, weights=None):
     '''
-    Plot local sensitivity index (at the MAP value) for each parameter x_i to each observable O_j:
+    Plot local sensitivity index (at posterior median parameters) for each parameter x_i to each observable O_j:
         S(x_i, O_j, delta) = 1/delta * [O_j(x_i') - O_j(x_i)] / O_j(x_i)
     where x_i'=(1+delta)x_i and delta is a fixed parameter.
 
@@ -242,11 +218,14 @@ def _plot_observable_sensitivity(posterior, plot_dir, config, delta=0.1, n_sampl
       - https://link.springer.com/article/10.1007/BF00547132
     '''
 
-    # Find the MAP value
-    map_parameters = mcmc.map_parameters(posterior)
+    # Use weighted marginal medians as a representative point
+    map_parameters = mcmc.representative_parameters(posterior, weights=weights)
 
     # Plot sensitivity index for each parameter
-    for i_parameter in range(posterior.shape[1]):
+    info = parameterization_info(config.analysis_config, config.parameterization)
+    for i_parameter, name in enumerate(info.full_names):
+        if name in info.fixed_parameters:
+            continue
         _plot_single_parameter_observable_sensitivity(map_parameters, i_parameter,
                                                       plot_dir, config, delta=delta)
 
@@ -263,7 +242,7 @@ def _plot_observable_sensitivity(posterior, plot_dir, config, delta=0.1, n_sampl
 #---------------------------------------------------------------
 def _plot_single_parameter_observable_sensitivity(map_parameters, i_parameter, plot_dir, config, delta=0.1):
     '''
-    Plot local sensitivity index (at the MAP value) for a single parameter x_i to each observable O_j:
+    Plot local sensitivity index (at posterior median parameters) for a single parameter x_i to each observable O_j:
         S(x_i, O_j, delta) = 1/delta * [O_j(x_i') - O_j(x_i)] / O_j(x_i)
     where x_i'=(1+delta)x_i and delta is a fixed parameter.
 
@@ -316,7 +295,7 @@ def _plot_single_parameter_observable_sensitivity(map_parameters, i_parameter, p
     # Plot
     plot_list = [sensitivity_index_dict]
     columns = [0]
-    labels = [rf'Sensitivity index at MAP, $\delta={delta}$']
+    labels = [rf'Sensitivity index at posterior median, $\delta={delta}$']
     colors = [sns.xkcd_rgb['dark sky blue']]
     param_label = parameter_names_for_plot[i_parameter]
     param = param_label[1:-1].replace('{', '{{').replace('}', '}}') if param_label.startswith("$") else param_label
@@ -411,25 +390,17 @@ def _generate_prior_samples(config, n_samples=100):
     :param 2darray parameters: posterior samples of parameters -- shape (n_samples, n_params)
     :return 2darray: samples -- shape (n_samples,n_params)
     '''
-    parameter_info = parameterization_info(config.analysis_config, config.parameterization)
-    names = parameter_info.sampled_names
-    parameter_min = parameter_info.sampled_min.copy()
-    parameter_max = parameter_info.sampled_max.copy()
-
-    # Transform c1,c2,c3 to log
-    n_params = len(names)
-    for i,name in enumerate(names):
-        if 'c_' in name:
-            parameter_min[i] = np.log(parameter_min[i])
-            parameter_max[i] = np.log(parameter_max[i])
-
-    # Generate uniform samples
-    rng = np.random.default_rng()
-    samples = rng.uniform(parameter_min, parameter_max, (n_samples, n_params))
-
-    # Transform log(c1,c2,c3) back to c1,c2,c3
-    for i,name in enumerate(names):
-        if 'c_' in name:
-            samples[:,i] = np.exp(samples[:,i])
-
-    return samples
+    info = parameterization_info(config.analysis_config, config.parameterization)
+    settings = config.analysis_config['parameterization'][config.parameterization]
+    prior = info.filter_prior_config(settings.get('prior'))
+    rng = np.random.default_rng(getattr(config, 'random_seed', None))
+    sequential = sequential_prior.build_sequential_log_prior_fn(
+        sequential_config=getattr(config, 'sequential_inference_config', None), combined_prior_config=prior,
+        sampled_parameter_names=info.sampled_names, sampled_parameter_min=info.sampled_min,
+        sampled_parameter_max=info.sampled_max,
+    )
+    if sequential is not None:
+        draws = sequential.sample(n_samples, random_state=rng)
+    else:
+        draws = sample_prior(prior, info.sampled_names, info.sampled_min, info.sampled_max, n_samples, rng)
+    return info.expand_sampled_to_full(draws)

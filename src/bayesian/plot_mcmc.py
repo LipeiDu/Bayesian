@@ -12,16 +12,14 @@ import pickle
 import numpy as np
 import pandas as pd
 import emcee
-import pymc
 
 from matplotlib import pyplot as plt
-from matplotlib.collections import PathCollection
 import seaborn as sns
 sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize':18})
 
 from bayesian import data_IO
 from bayesian import plot_utils
-from bayesian.posterior_utils import flatten_chain_samples
+from bayesian.posterior_utils import flatten_chain_samples, normalized_weights
 from bayesian.emulation import base
 from bayesian import mcmc
 from bayesian.parameterization import parameterization_info
@@ -54,7 +52,7 @@ def plot(config: mcmc.MCMCConfig):
     if 'parameter_names' in results:
         parameter_names = [s.decode() if isinstance(s, bytes) else s for s in results['parameter_names']]
     else:
-        parameter_names = config.analysis_config['parameterization'][config.parameterization]['names']
+        parameter_names = parameterization_info(config.analysis_config, config.parameterization).sampled_names
         logger.warning("parameter_names not found in MCMC file. Falling back to config-defined names.")
 
     # Only model parameters
@@ -88,13 +86,13 @@ def plot(config: mcmc.MCMCConfig):
     else:
         raise ValueError(f"Unsupported chain shape {chain.shape} in MCMC plotter.")
 
-    _plot_posterior_pairplot(chain, plot_dir, parameter_names)
+    _plot_posterior_pairplot(chain, plot_dir, parameter_names, weights=results.get("weights"))
 
     # Posterior vs. Design observables
     design = data_IO.design_array_from_h5(config.input_analysis_dir, filename=config.observables_filename)
     _plot_design_pairplot(design, plot_dir, model_param_names)
     _plot_design_observables(design, plot_dir, config)
-    _plot_posterior_observables(chain, plot_dir, config, parameter_names=parameter_names)
+    _plot_posterior_observables(chain, plot_dir, config, parameter_names=parameter_names, weights=results.get("weights"))
 
 
 #---------------------------------------------------------------
@@ -259,58 +257,38 @@ def _plot_autocorrelation_time(results, plot_dir, parameter_names):
         plt.close()
 
 #---------------------------------------------------------------
-def _plot_posterior_pairplot(chain, plot_dir, parameter_names, holdout_test = False, holdout_point = None):
-    '''
-    Plot posterior pairplot
-    Optionally, we can also display the holdout point (if holdout_test = True)
-
-    :param 3darray chain: positions of walkers at each step -- shape (n_steps, n_walkers, n_dim)
-    :param bool holdout_test (optional): whether to display holdout point
-    :param 1darray holdout_point (optional): point to display
-    '''
-
+def _plot_posterior_pairplot(chain, plot_dir, parameter_names, holdout_test=False, holdout_point=None,
+                             *, weights=None, confidence=0.9):
+    """Weighted marginal histograms and joint histograms for either sampler shape."""
     samples = flatten_chain_samples(chain)
-    # Construct dataframe of samples
-    df = pd.DataFrame(samples, columns=[s.decode() if isinstance(s, bytes) else str(s) for s in parameter_names])
-
-    # Plot posterior pairplot
-    g = sns.pairplot(df, diag_kind='kde',
-                     plot_kws={'alpha':0.1, 's':1, 'color':sns.xkcd_rgb['light blue']},
-                     diag_kws={'color':'blue', 'fill':True})
-
-    # Rasterize the scatter points but not the diagonal, to keep file size small
-    for i, row_axes in enumerate(g.axes):
-        for j, ax in enumerate(row_axes):
-            if i != j:
-                for artist in ax.get_children():
-                    if isinstance(artist, PathCollection):
-                        artist.set_rasterized(True)
-
-    # If holdout test, draw the holdout point
-    # (and we will return whether it is contained in the credible region)
+    mass = normalized_weights(weights, len(samples))
+    names = [value.decode() if isinstance(value, bytes) else str(value) for value in parameter_names]
+    ndim = samples.shape[1]
+    fig, axes = plt.subplots(ndim, ndim, figsize=(2.6*ndim, 2.6*ndim), squeeze=False)
+    contained = True
+    for i in range(ndim):
+        for j in range(ndim):
+            ax = axes[i, j]
+            if i == j:
+                ax.hist(samples[:, i], bins=35, weights=mass, density=True, histtype="step", color="steelblue")
+                if holdout_test:
+                    interval = mcmc.credible_interval(samples[:, i], confidence, interval_type="hpd", weights=mass)
+                    ax.axvspan(*interval, alpha=0.15, color="0.3")
+                    ax.axvline(holdout_point[i], color="black")
+                    contained = contained and interval[0] <= holdout_point[i] <= interval[1]
+            else:
+                ax.hist2d(samples[:, j], samples[:, i], bins=35, weights=mass, cmap="Blues", rasterized=True)
+                if holdout_test:
+                    ax.scatter(holdout_point[j], holdout_point[i], color="black", s=15)
+            if i == ndim-1:
+                ax.set_xlabel(names[j], fontsize=9)
+            if j == 0:
+                ax.set_ylabel(names[i], fontsize=9)
+    fig.tight_layout()
+    fig.savefig(f'{plot_dir}/pairplot_posterior.pdf')
+    plt.close(fig)
     if holdout_test:
-        theta_closure = True
-        for i, row_axes in enumerate(g.axes):
-            for j, ax in enumerate(row_axes):
-                if i == j: # Along diagonal, draw the highest posterior density interval (HPDI)
-
-                    credible_interval = pymc.stats.hpd(np.array(samples[:,i]), config.confidence)
-                    ymax = ax.get_ylim()[1]
-                    ax.fill_between(credible_interval, [ymax,ymax], color=sns.xkcd_rgb['almost black'], alpha=0.1)
-
-                    # Store whether truth value is contained within credible region
-                    theta_truth = holdout_point[i]
-                    if (theta_truth > credible_interval[1]) or (theta_truth < credible_interval[0]):
-                        theta_closure = False
-
-                if i != j: # Off diagonal, draw the holdout point
-                    ax.scatter(holdout_point[j], holdout_point[i], color=sns.xkcd_rgb['almost black'])
-
-    plt.savefig(f'{plot_dir}/pairplot_posterior.pdf')
-    plt.close('all')
-
-    if holdout_test:
-        return theta_closure
+        return bool(contained)
 
 #---------------------------------------------------------------
 def _plot_design_pairplot(design, plot_dir, parameter_names):
@@ -327,7 +305,7 @@ def _plot_design_pairplot(design, plot_dir, parameter_names):
     for col in df.columns:
         if 'c_' in col:
             df[col] = np.log(df[col])
-            df.rename(columns={col: col.replace('c_','\mathrm{ln}c_')}, inplace=True)
+            df.rename(columns={col: col.replace('c_',r'\mathrm{ln}c_')}, inplace=True)
 
     # Plot posterior pairplot
     sns.pairplot(df, diag_kind='hist',
@@ -362,7 +340,7 @@ def _plot_design_observables(design, plot_dir, config):
     plot_utils.plot_observable_panels(plot_list, labels, colors, columns, config, plot_dir, filename, linewidth=1)
 
 #---------------------------------------------------------------
-def _plot_posterior_observables(chain, plot_dir, config, n_samples=200, parameter_names=None):
+def _plot_posterior_observables(chain, plot_dir, config, n_samples=200, parameter_names=None, weights=None):
     '''
     Plot (emulated) observables at samples of posterior
 
@@ -373,7 +351,8 @@ def _plot_posterior_observables(chain, plot_dir, config, n_samples=200, paramete
 
     # Flatten chain to shape (n_steps*n_walkers, n_dim), and sample parameters without replacement
     posterior = flatten_chain_samples(chain)
-    idx = np.random.choice(posterior.shape[0], size=n_samples, replace=False)
+    rng = np.random.default_rng(getattr(config, "random_seed", None))
+    idx = rng.choice(len(posterior), size=n_samples, replace=True, p=normalized_weights(weights, len(posterior)))
 
     # extract model parameters only before prediction
     parameter_info = parameterization_info(config.analysis_config, config.parameterization)

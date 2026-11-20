@@ -9,11 +9,11 @@ import argparse
 import logging
 import os
 import shutil
+from importlib import import_module
 import yaml
 from pathlib import Path
 
 from bayesian import data_IO, preprocess_input_data, mcmc
-from bayesian import plot_input_data, plot_emulation, plot_mcmc, plot_qhat, plot_closure, plot_analyses, plot_discrepancy
 
 from bayesian import common_base, helpers
 from bayesian.emulation import base
@@ -248,7 +248,7 @@ class SteerAnalysis(common_base.CommonBase):
                         parameterization=parameterization,
                         config_file=self.config_file,
                         analysis_config=analysis_config)
-                    plot_input_data.plot(emulation_config)
+                    import_module("bayesian.plot_input_data").plot(emulation_config)
                     logger.info(f'Done!')
                     logger.info("")
 
@@ -260,7 +260,7 @@ class SteerAnalysis(common_base.CommonBase):
                         parameterization=parameterization,
                         config_file=self.config_file,
                         analysis_config=analysis_config)
-                    plot_emulation.plot(emulation_config)
+                    import_module("bayesian.plot_emulation").plot(emulation_config)
                     logger.info(f'Done!')
                     logger.info("")
 
@@ -271,7 +271,7 @@ class SteerAnalysis(common_base.CommonBase):
                                                 parameterization=parameterization,
                                                 analysis_config=analysis_config,
                                                 config_file=self.config_file)
-                    plot_mcmc.plot(mcmc_config)
+                    import_module("bayesian.plot_mcmc").plot(mcmc_config)
                     logger.info(f'Done!')
                     logger.info("")
 
@@ -282,7 +282,7 @@ class SteerAnalysis(common_base.CommonBase):
                                                 parameterization=parameterization,
                                                 analysis_config=analysis_config,
                                                 config_file=self.config_file)
-                    plot_qhat.plot(mcmc_config)
+                    import_module("bayesian.plot_qhat").plot(mcmc_config)
                     logger.info(f'Done!')
                     logger.info("")
 
@@ -293,7 +293,7 @@ class SteerAnalysis(common_base.CommonBase):
                                                 parameterization=parameterization,
                                                 analysis_config=analysis_config,
                                                 config_file=self.config_file)
-                    plot_closure.plot(mcmc_config)
+                    import_module("bayesian.plot_closure").plot(mcmc_config)
                     logger.info(f'Done!')
                     logger.info("")
 
@@ -304,7 +304,7 @@ class SteerAnalysis(common_base.CommonBase):
                                                 parameterization=parameterization,
                                                 analysis_config=analysis_config,
                                                 config_file=self.config_file)
-                    plot_discrepancy.plot(mcmc_config)
+                    import_module("bayesian.plot_discrepancy").plot(mcmc_config)
                     logger.info(f'Done!')
                     logger.info("")
 
@@ -312,7 +312,7 @@ class SteerAnalysis(common_base.CommonBase):
         if self.plot['across_analyses']:
             # NOTE: This is a departure from the standard API, but we need a convention for how
             #       to pass multiple analyses, so we'll just go with it for now.
-            plot_analyses.plot(self.analyses, self.config_file, self.output_dir)
+            import_module("bayesian.plot_analyses").plot(self.analyses, self.config_file, self.output_dir)
 
 
 ####################################################################################################################

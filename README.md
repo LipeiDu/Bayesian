@@ -31,7 +31,20 @@ Compact, reproducibility-critical inputs for the reduced soft-hard study are ver
 ### To run the analysis:
 
 ```bash
-python steer_analysis.py -c ./config/jet_substructure.yaml
+export PYTHONPATH="$PWD:$PWD/src"
+python -m bayesian.steer_analysis -c ./config/jet_substructure.yaml
 ```
 
 Configure the software as usual for python using a virtual environment.
+
+## Reproducible components and tests
+
+Start with the [public inference guide](docs/features/README.md) for runnable
+YAML examples of model discrepancy, sequential KDE/flow inference, and two-step
+posterior-to-prior inference. The examples prepare their own analytic emulator
+inputs and include mathematical validation and figures.
+
+The [validation guide](docs/features/validation.md) documents regression commands,
+weighted output semantics, and evidence limitations. [Component ownership](docs/development/ownership.md)
+separates the reusable backend from study command recipes and internal review
+records. Backend tests remain in `tests/`.

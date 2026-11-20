@@ -1,0 +1,191 @@
+{
+  "discrepancy_fixed": {
+    "mean": [
+      0.24566397545504598,
+      0.7946366633991366
+    ],
+    "reference_mean": [
+      0.248328721912572,
+      0.7916901260873703
+    ],
+    "max_mean_error": 0.0029465373117663063,
+    "max_covariance_error": 0.0008801239668094867,
+    "draws": 19200,
+    "density_errors": {
+      "likelihood": 7.105427357601002e-15,
+      "prior": 0.0,
+      "target": 7.105427357601002e-15
+    },
+    "marginal_cdf_errors": [
+      0.02183747340620837,
+      0.02369477315170132
+    ],
+    "reference": "analytic Gaussian",
+    "status": "passed",
+    "example_kind": "discrepancy_fixed",
+    "samplers": {
+      "demo": "emcee"
+    }
+  },
+  "sequential_flow": {
+    "density_errors": {
+      "likelihood": 2.6645352591003757e-15,
+      "prior": 0.0,
+      "target": 2.6645352591003757e-15
+    },
+    "coupling_cdf_error": 0.02345197689779388,
+    "draws": 1087,
+    "reference": "analytic truncated-Gaussian coupling marginal; soft-density loader also covered by independent payload regression tests",
+    "status": "passed",
+    "example_kind": "sequential",
+    "samplers": {
+      "demo": "pocoMC"
+    }
+  },
+  "discrepancy_inferred": {
+    "mean": [
+      0.2532853321792732,
+      0.7760830728853562,
+      -0.4386046488378712,
+      0.3245386790278955,
+      1.2136923042506174
+    ],
+    "reference_mean": [
+      0.2605131776141611,
+      0.7695997939083404,
+      -0.41817780146381783,
+      0.3199387931242141,
+      1.26957521092919
+    ],
+    "max_mean_error": 0.05588290667857265,
+    "max_covariance_error": 0.007036390601758358,
+    "draws": 1113,
+    "density_errors": {
+      "likelihood": 3.552713678800501e-14,
+      "prior": 0.0,
+      "target": 3.552713678800501e-14
+    },
+    "marginal_cdf_errors": [
+      0.048887778059148235,
+      0.036680681041523555,
+      0.03534840308804338,
+      0.050958907502701045,
+      0.09958994690863976
+    ],
+    "reference": "35^3 midpoint quadrature with analytic model conditioning",
+    "status": "passed",
+    "example_kind": "discrepancy_inferred",
+    "samplers": {
+      "demo": "pocoMC"
+    }
+  },
+  "sequential_kde": {
+    "density_errors": {
+      "likelihood": 1.7763568394002505e-15,
+      "prior": 0.0,
+      "target": 1.7763568394002505e-15
+    },
+    "coupling_cdf_error": 0.04596066820685685,
+    "draws": 2400,
+    "reference": "analytic truncated-Gaussian coupling marginal; soft-density loader also covered by independent payload regression tests",
+    "status": "passed",
+    "example_kind": "sequential",
+    "samplers": {
+      "demo": "emcee"
+    }
+  },
+  "multistep_gaussian": {
+    "mean": [
+      -0.1999947145936809,
+      0.7928506670293095
+    ],
+    "reference_mean": [
+      -0.20009911534991898,
+      0.7965664351621667
+    ],
+    "max_mean_error": 0.0037157681328572334,
+    "max_covariance_error": 0.0007542711884343314,
+    "draws": 8000,
+    "density_errors": {
+      "likelihood": 1.7763568394002505e-15,
+      "prior": 6.483702463810914e-14,
+      "target": 6.483702463810914e-14
+    },
+    "marginal_cdf_errors": [
+      0.010644089558951325,
+      0.01958917488925893
+    ],
+    "fitted_prior_mean_difference_from_joint": [
+      0.0013882833006352013,
+      -0.012365059820064972
+    ],
+    "joint_sampler": {
+      "mean": [
+        -0.1916070089790435,
+        0.809077866726621
+      ],
+      "reference_mean": [
+        -0.20148739865055418,
+        0.8089314949822317
+      ],
+      "max_mean_error": 0.00988038967151067,
+      "max_covariance_error": 0.0005466904512613855,
+      "draws": 8000
+    },
+    "reference": "exact fitted-prior Gaussian/mixture update; original-prior joint shown separately",
+    "status": "passed",
+    "example_kind": "multistep",
+    "samplers": {
+      "first": "emcee",
+      "second": "emcee",
+      "joint": "emcee"
+    }
+  },
+  "multistep_kde": {
+    "mean": [
+      -0.21210584800651158,
+      0.8133137750519902
+    ],
+    "reference_mean": [
+      -0.20642596094618088,
+      0.8122748867705711
+    ],
+    "max_mean_error": 0.005679887060330707,
+    "max_covariance_error": 0.00029179990996206287,
+    "draws": 1075,
+    "density_errors": {
+      "likelihood": 8.881784197001252e-16,
+      "prior": 4.440892098500626e-15,
+      "target": 4.440892098500626e-15
+    },
+    "marginal_cdf_errors": [
+      0.033754043306826076,
+      0.02148684965034131
+    ],
+    "fitted_prior_mean_difference_from_joint": [
+      -0.004938562295626697,
+      0.0033433917883394226
+    ],
+    "joint_sampler": {
+      "mean": [
+        -0.2072830897660395,
+        0.8032371850223506
+      ],
+      "reference_mean": [
+        -0.20148739865055418,
+        0.8089314949822317
+      ],
+      "max_mean_error": 0.005795691115485335,
+      "max_covariance_error": 0.00036197167365160064,
+      "draws": 1050
+    },
+    "reference": "exact fitted-prior Gaussian/mixture update; original-prior joint shown separately",
+    "status": "passed",
+    "example_kind": "multistep",
+    "samplers": {
+      "first": "pocoMC",
+      "second": "pocoMC",
+      "joint": "pocoMC"
+    }
+  }
+}

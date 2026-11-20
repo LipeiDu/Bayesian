@@ -16,6 +16,8 @@ sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize'
 
 from bayesian import data_IO, mcmc
 from bayesian import plot_qhat
+from bayesian.parameterization import parameterization_info
+from bayesian.posterior_utils import model_posterior_samples, select_posterior_samples, maximum_posterior_sample
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +51,8 @@ def plot(analyses: dict[str, Any], config_file: str, output_dir: str) -> None:
 
         # Get results from file
         results[analysis_name] = data_IO.read_dict_from_h5(config.output_dir, config.mcmc_outputfilename, verbose=True)
-        n_walkers, n_steps, n_params = results[analysis_name]['chain'].shape
-        posteriors[analysis_name] = results[analysis_name]['chain'].reshape((n_walkers*n_steps, n_params))
+        info = parameterization_info(config.analysis_config, config.parameterization)
+        posteriors[analysis_name], _weights = model_posterior_samples(results[analysis_name], info)
 
     # Plot output dir
     plot_dir = os.path.join(output_dir, 'plot_analyses')
@@ -74,7 +76,7 @@ def plot_qhat_across_analyses(
     results,
     posteriors,
     plot_dir,
-    configs, E=0, T=0, cred_level=0., n_samples=5000, n_x=50,
+    configs, E=0, T=0, cred_level=0.9, n_samples=5000, n_x=50,
     plot_prior=True, plot_mean=True, plot_map=False, target_design_point=np.array([])):
     '''
     Plot qhat credible interval from posterior samples,
@@ -91,127 +93,51 @@ def plot_qhat_across_analyses(
     :param 1darray target_design_point: if closure test, design point corresponding to "truth" qhat value
     '''
 
-    colors = [
-        sns.xkcd_rgb['light blue'],
-        "#FF8301",   # orange,
-    ]
-    already_drawn_prior_credible_interval = False
-
     fig, ax = plt.subplots()
-    for color, (analysis_name, result), posterior, config in zip(colors, results.items(), posteriors.values(), configs.values()):
-        # TODO: Labels are hard coded...
-        analysis_label = "Jet $R_{\mathrm{AA}}$"
-        if "substructure" in analysis_name:
-            analysis_label = "Jet $R_{\mathrm{AA}}$ + substructure"
-        # Sample posterior parameters without replacement
-        if posterior.shape[0] < n_samples:
-            n_samples = posterior.shape[0]
-            logger.warning(f'Not enough posterior samples to plot {n_samples} samples, using {n_samples} instead')
-        idx = np.random.choice(posterior.shape[0], size=n_samples, replace=False)
-        posterior_samples = posterior[idx,:]
+    colors = plt.get_cmap("tab10")
+    ymax = 0.0
+    qhat_closure = {}
+    for index, (analysis_name, result) in enumerate(results.items()):
+        posterior, config = posteriors[analysis_name], configs[analysis_name]
+        samples, weights = select_posterior_samples(
+            posterior, result.get("weights"), max_samples=n_samples,
+            random_state=getattr(config, "random_seed", None)
+        )
+        color = colors(index % 10)
+        x_array = np.linspace(0.16, 0.5, n_x) if E else np.linspace(5, 200, n_x)
 
-        # Compute qhat for each sample (as well as MAP value), as a function of T or E
-        #   qhat_posteriors will be a 2d array of shape (x_array.size, n_samples)
-        if E:
-            xlabel = 'T (GeV)'
-            suffix = f'E{E}'
-            label = f'E = {E} GeV'
-            x_array = np.linspace(0.16, 0.5, n_x)
-            qhat_posteriors = np.array([plot_qhat.qhat_over_T_cubed(posterior_samples, config, T=T, E=E) for T in x_array])
-        elif T:
-            xlabel = 'E (GeV)'
-            suffix = f'T{T}'
-            label = f'T = {T} GeV'
-            x_array = np.linspace(5, 200, n_x)
-            qhat_posteriors = np.array([plot_qhat.qhat_over_T_cubed(posterior_samples, config, T=T, E=E) for E in x_array])
+        def evaluate(points, model_config=config, grid=x_array):
+            return np.array([plot_qhat.qhat_over_T_cubed(points, model_config, T=x if E else T, E=E if E else x)
+                             for x in grid])
 
-        # Plot mean qhat values for each T or E
-        qhat_mean = np.mean(qhat_posteriors, axis=1)
+        values = evaluate(samples)
+        mean = values @ weights
+        intervals = np.array([mcmc.credible_interval(row, confidence=cred_level, weights=weights) for row in values])
+        ax.fill_between(x_array, intervals[:, 0], intervals[:, 1], color=color, alpha=0.25,
+                        label=f"{analysis_name}: {int(cred_level*100)}% posterior interval")
+        ymax = max(ymax, float(intervals[:, 1].max()))
         if plot_mean:
-            ax.plot(x_array, qhat_mean, color=color, #sns.xkcd_rgb['denim blue'],
-                    linewidth=2., linestyle='--', label=f'{analysis_label}: Mean')
-
-        # Plot the MAP value as well for each T or E
+            ax.plot(x_array, mean, "--", color=color, label=f"{analysis_name}: mean")
         if plot_map:
-            if E:
-                qhat_map = np.array([plot_qhat.qhat_over_T_cubed(mcmc.map_parameters(posterior_samples), config, T=T, E=E) for T in x_array])
-            elif T:
-                qhat_map = np.array([plot_qhat.qhat_over_T_cubed(mcmc.map_parameters(posterior_samples), config, T=T, E=E) for E in x_array])
-            ax.plot(x_array, qhat_map, #sns.xkcd_rgb['medium green'],
-                    linewidth=2., linestyle='--', label=f'{analysis_label}: MAP')
-
-        # Plot prior as well, for comparison
-        # TODO: one could also plot some type of "information gain" metric, e.g. KL divergence
-        if plot_prior and not already_drawn_prior_credible_interval:
-
-            # Generate samples
-            prior_samples = plot_qhat._generate_prior_samples(config, n_samples=n_samples)
-
-            # Compute qhat for each sample, as a function of T or E
-            if E:
-                qhat_priors = np.array([plot_qhat.qhat_over_T_cubed(prior_samples, config, T=T, E=E) for T in x_array])
-            elif T:
-                qhat_priors = np.array([plot_qhat.qhat_over_T_cubed(prior_samples, config, T=T, E=E) for E in x_array])
-
-            # Get credible interval for each T or E
-            h_prior = [mcmc.credible_interval(qhat_values, confidence=cred_level) for qhat_values in qhat_priors]
-            credible_low_prior = [i[0] for i in h_prior]
-            credible_up_prior =  [i[1] for i in h_prior]
-            ax.fill_between(x_array, credible_low_prior, credible_up_prior, color=color, #color=sns.xkcd_rgb['light blue'],
-                            alpha=0.3, label=f'Prior {int(cred_level*100)}% Credible Interval (CI)')
-            already_drawn_prior_credible_interval = True
-
-        # Get credible interval for each T or E
-        h = [mcmc.credible_interval(qhat_values, confidence=cred_level) for qhat_values in qhat_posteriors]
-        credible_low = [i[0] for i in h]
-        credible_up =  [i[1] for i in h]
-        ax.fill_between(x_array, credible_low, credible_up, color=color, #alpha=0.8 if color == "#FF8301" else 1.0, #color=sns.xkcd_rgb['light blue'],
-                        label=f'{analysis_label}: Posterior {int(cred_level*100)}% CI')
-
-
-        # If closure test: Plot truth qhat value
-        # We will return a dict of info needed for plotting closure plots, including a
-        #   boolean array (as a fcn of T or E) of whether the truth value is contained within credible region
-        if target_design_point.any():
-            if E:
-                qhat_truth = [plot_qhat.qhat_over_T_cubed(target_design_point, config, T=T, E=E) for T in x_array]
-            elif T:
-                qhat_truth = [plot_qhat.qhat_over_T_cubed(target_design_point, config, T=T, E=E) for E in x_array]
-            ax.plot(x_array, qhat_truth, sns.xkcd_rgb['pale red'],
-                    linewidth=2., label='Target')
-
-            qhat_closure = {}
-            qhat_closure['qhat_closure_array'] = np.array([((qhat_truth[i] < credible_up[i]) and (qhat_truth[i] > credible_low[i])) for i,_ in enumerate(x_array)]).squeeze()
-            qhat_closure['qhat_mean'] = qhat_mean
-            qhat_closure['x_array'] = x_array
-            qhat_closure['cred_level'] = cred_level
-
-    # Plot formatting
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(r'$\hat{q}/T^3$')
-    ymin = 0
-    if plot_map:
-        ymax = 2*max(qhat_map)
-    else:
-        # Use mean in all other cases
-        ymax = 2*max(qhat_mean)
-    ax.set_ylim([ymin, ymax])
-    ax.legend(title=f'{label}, 0-10% central data', title_fontsize=13,
-            loc='upper right', fontsize=12, frameon=False)
-
-    # Add preliminary label
-    # TODO: Remove this...
-    #ax.text(0.05, 0.05,
-    #        'JETSCAPE Preliminary',
-    #        horizontalalignment="left",
-    #        verticalalignment="bottom",
-    #        multialignment="left",
-    #        transform=ax.transAxes
-    #    )
-
+            point = maximum_posterior_sample(posterior, result.get("log_target"))
+            ax.plot(x_array, evaluate(np.atleast_2d(point)).reshape(-1), color=color,
+                    label=f"{analysis_name}: highest-target sample")
+        if plot_prior:
+            prior = evaluate(plot_qhat._generate_prior_samples(config, n_samples=len(samples)))
+            interval = np.array([mcmc.credible_interval(row, confidence=cred_level) for row in prior])
+            ax.fill_between(x_array, interval[:, 0], interval[:, 1], color=color, alpha=0.1,
+                            label=f"{analysis_name}: configured prior")
+            ymax = max(ymax, float(interval[:, 1].max()))
+        if target_design_point.size:
+            truth = evaluate(target_design_point).reshape(-1)
+            ax.plot(x_array, truth, color="black", linestyle=":")
+            qhat_closure = {"qhat_closure_array": (truth >= intervals[:, 0]) & (truth <= intervals[:, 1]),
+                            "qhat_mean": mean, "x_array": x_array, "cred_level": cred_level}
+    suffix = f"E{E}" if E else f"T{T}"
+    ax.set(xlabel="T (GeV)" if E else "E (GeV)", ylabel=r'$\hat{q}/T^3$', ylim=(0, max(ymax*1.15, 1)))
+    ax.legend(fontsize=8, frameon=False)
     fig.tight_layout()
     fig.savefig(f'{plot_dir}/qhat_{suffix}.pdf')
-    plt.close('all')
-
-    if target_design_point.any():
+    plt.close(fig)
+    if target_design_point.size:
         return qhat_closure

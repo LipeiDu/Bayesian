@@ -16,7 +16,6 @@ from functools import partial
 
 import numpy as np
 import scipy
-import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
 sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize':18})
@@ -24,6 +23,8 @@ sns.set_context('paper', rc={'font.size':18,'axes.titlesize':18,'axes.labelsize'
 from bayesian import data_IO
 from bayesian import plot_qhat
 from bayesian import mcmc
+from bayesian.parameterization import parameterization_info
+from bayesian.posterior_utils import model_posterior_samples
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,6 @@ def plot(config):
     E = 100
     T = 0.3
     n_x = 50    # number of T or E points to plot
-    n_theta_samples = 200
 
     # Construct a dict of info to save in order to make summary plots.
     # This bookkeeping can probably be cleaned up.
@@ -60,7 +60,8 @@ def plot(config):
     closure_summary[f'T{T}']['qhat_mean'] = np.zeros((n_design_points, n_x))
 
     # get model-only parameter names
-    model_param_names = config.analysis_config['parameterization'][config.parameterization]['names']
+    info = parameterization_info(config.analysis_config, config.parameterization)
+    model_param_names = info.full_names
 
     for parameter in model_param_names:
         closure_summary[parameter] = {}
@@ -82,29 +83,21 @@ def plot(config):
         results = data_IO.read_dict_from_h5(result_dir, 'mcmc.h5', verbose=True)
 
         # Get posterior samples
-        parameter_names = results["parameter_names"].astype(str).tolist()  # stored in mcmc.h5
-        n_walkers, n_steps, n_params = results['chain'].shape
-        posterior_full = results['chain'].reshape((n_walkers * n_steps, n_params))
-        posterior_df = pd.DataFrame(posterior_full, columns=parameter_names)
-        posterior = posterior_df[model_param_names].to_numpy()
-
-        # Get target design point, so we can compute "true" qhat
-        target_design_point_full = results['design_point'].reshape((1, len(model_param_names)))
-        target_df = pd.DataFrame(target_design_point_full, columns=model_param_names)
-        target_design_point = target_df[model_param_names].to_numpy()
+        posterior, weights = model_posterior_samples(results, info)
+        target_design_point = results['design_point'].reshape((1, len(model_param_names)))
 
         # Plot qhat vs. T,E and return boolean array of whether target qhat is within credible interval
         # Then save relevant info to make summary plots over all closure points
         qhat_plot_dir = os.path.join(config.output_dir, f'closure/results/{design_point_index}')
         qhat_closure_dict = plot_qhat.plot_qhat(posterior, qhat_plot_dir, config, E=E, cred_level=cred_level,
-                                                n_samples=1000, n_x=n_x, target_design_point=target_design_point)
+                                                n_samples=1000, n_x=n_x, target_design_point=target_design_point, weights=weights)
         closure_summary[f'E{E}']['qhat_closure_array'][design_point_index] = qhat_closure_dict['qhat_closure_array']
         closure_summary[f'E{E}']['qhat_mean'][design_point_index] = qhat_closure_dict['qhat_mean']
         closure_summary[f'E{E}']['x_array'] = qhat_closure_dict['x_array']
         closure_summary[f'E{E}']['cred_level'] = qhat_closure_dict['cred_level']
 
         qhat_closure_dict = plot_qhat.plot_qhat(posterior, qhat_plot_dir, config, T=T, cred_level=cred_level,
-                                                n_samples=1000, n_x=n_x, target_design_point=target_design_point)
+                                                n_samples=1000, n_x=n_x, target_design_point=target_design_point, weights=weights)
         closure_summary[f'T{T}']['qhat_closure_array'][design_point_index] = qhat_closure_dict['qhat_closure_array']
         closure_summary[f'T{T}']['qhat_mean'][design_point_index] = qhat_closure_dict['qhat_mean']
         closure_summary[f'T{T}']['x_array'] = qhat_closure_dict['x_array']
@@ -112,17 +105,10 @@ def plot(config):
 
         # Compute the credible interval for the design parameter, and check whether target is within it
         for i,parameter in enumerate(model_param_names):
-            chain = results['chain']
-            posterior_full = chain.reshape((chain.shape[0]*chain.shape[1], chain.shape[2]))
-            posterior_df = pd.DataFrame(posterior_full, columns=parameter_names)
-            posterior = posterior_df[model_param_names].to_numpy()
-
-            idx = np.random.choice(posterior.shape[0], size=n_theta_samples, replace=False)
-            posterior_samples = posterior[idx,:]
-            credible_interval = mcmc.credible_interval(posterior_samples[:,i], confidence=cred_level)
+            credible_interval = mcmc.credible_interval(posterior[:, i], confidence=cred_level, weights=weights)
             theta_truth = target_design_point[0][i]
             closure_summary[parameter]['theta_truth'][design_point_index] = theta_truth
-            closure_summary[parameter]['theta_closure_array'][design_point_index] = (theta_truth > credible_interval[0]) and (theta_truth < credible_interval[1])
+            closure_summary[parameter]['theta_closure_array'][design_point_index] = (theta_truth >= credible_interval[0]) and (theta_truth <= credible_interval[1])
             closure_summary[parameter]['qhat_mean'][design_point_index] = np.mean(plot_qhat.qhat_over_T_cubed(target_design_point, config, T=T, E=E))
 
     # Create summary plots over all closure points

@@ -6,6 +6,8 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from bayesian.prior import normalize_prior_config
+
 
 @dataclass(frozen=True)
 class ParameterizationInfo:
@@ -35,13 +37,13 @@ class ParameterizationInfo:
         ]
 
     def filter_prior_config(self, prior_config: dict[str, Any] | None) -> dict[str, Any] | None:
-        if prior_config is None or "prior_source" in prior_config:
+        if prior_config is None:
             return prior_config
 
         sampled_indices = [
             i for i, name in enumerate(self.full_names) if name not in self.fixed_parameters
         ]
-        filtered_config = dict(prior_config)
+        filtered_config = normalize_prior_config(prior_config, len(self.full_names))
         for key in ["type", "mean", "std"]:
             if key in filtered_config:
                 filtered_config[key] = [filtered_config[key][i] for i in sampled_indices]

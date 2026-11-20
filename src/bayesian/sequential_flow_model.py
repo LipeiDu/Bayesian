@@ -92,8 +92,8 @@ def load_realnvp_2d_from_payload(payload: dict[str, Any]) -> Any:
             base_log_prob = -0.5 * (z.pow(2) + np.log(2.0 * np.pi)).sum(dim=-1)
             return base_log_prob + log_det_total
 
-        def sample(self, n_samples: int) -> Any:
-            z = torch.randn((n_samples, 2), dtype=torch.float32)
+        def sample(self, n_samples: int, *, generator=None) -> Any:
+            z = torch.randn((n_samples, 2), dtype=torch.float32, generator=generator)
             x = z
             for layer in self.layers:
                 x, _ = layer.forward(x)
